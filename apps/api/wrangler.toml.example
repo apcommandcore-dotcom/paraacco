@@ -1,0 +1,15 @@
+# 複製成 wrangler.toml 後依實際 Cloudflare 資源 ID 填入。
+# wrangler.toml 本身不進版控(比照 parallelserver 現有慣例)。
+
+name = "paraacco-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paraacco-db"
+database_id = "REPLACE_ME"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "paraacco-files"

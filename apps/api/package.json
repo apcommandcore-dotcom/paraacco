@@ -1,0 +1,22 @@
+{
+  "name": "@paraacco/api",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@paraacco/db": "workspace:*",
+    "@paraacco/domain": "workspace:*",
+    "@paraacco/shared": "workspace:*",
+    "hono": "^4.5.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.0.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.60.0"
+  }
+}

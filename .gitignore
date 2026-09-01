@@ -1,0 +1,11 @@
+node_modules/
+.turbo/
+dist/
+.next/
+out/
+.wrangler/
+.env
+.env.local
+.DS_Store
+*.log
+CODE_REPORT_*.md
