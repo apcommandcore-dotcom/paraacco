@@ -1,0 +1,12 @@
+name = "paraacco-api"
+main = "src/index.ts"
+compatibility_date = "2026-09-02"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "paraacco-db"
+database_id = "78b6cf4d-22fa-40df-b0e3-988b4c2dd906"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "paraacco-files"
