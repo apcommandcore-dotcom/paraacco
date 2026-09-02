@@ -10,3 +10,11 @@ database_id = "78b6cf4d-22fa-40df-b0e3-988b4c2dd906"
 [[r2_buckets]]
 binding = "FILES"
 bucket_name = "paraacco-files"
+
+[[queues.producers]]
+binding = "DOCUMENT_QUEUE"
+queue = "paraacco-document-ingest"
+
+# INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
+#   npx wrangler secret put INTERNAL_SERVICE_TOKEN
+# 要跟 apps/document-worker 那邊設的值完全一樣。

@@ -12,7 +12,7 @@
     "@paraacco/db": "workspace:*",
     "@paraacco/domain": "workspace:*",
     "@paraacco/shared": "workspace:*",
-    "drizzle-orm": "^0.33.0",
+    "drizzle-orm": "^0.44.0",
     "hono": "^4.5.0"
   },
   "devDependencies": {

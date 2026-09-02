@@ -6,5 +6,27 @@ compatibility_date = "2026-09-02"
 binding = "FILES"
 bucket_name = "paraacco-files"
 
-# 這個 worker 刻意不掛 D1 binding——所有寫入(OCR 結果、文件狀態更新)一律呼叫
-# paraacco-api 既有的端點,不直接寫資料庫。
+# 這個 worker 刻意不掛 D1 binding——所有寫入(OCR 結果、文件狀態更新、job/event 記錄)一律
+# 呼叫 paraacco-api 的 /internal/* 端點(見 src/internal-client.ts),不直接寫資料庫。
+
+[[services]]
+binding = "API"
+service = "paraacco-api"
+
+[[queues.consumers]]
+queue = "paraacco-document-ingest"
+max_batch_size = 5
+max_retries = 5
+# max_retries 用完之後訊息會被丟棄(除非另外設定 dead_letter_queue,見部署清單待辦)。
+# document-worker 內部失敗(pipeline 執行到一半出錯)不算在這個重試次數裡 ——
+# 那種情況 Workflow 自己的 step.do() retry 設定 / decide('failed') 落地處理,
+# 這裡的重試只涵蓋「claim 或建立 Workflow 實例本身失敗」的情況(見 src/index.ts)。
+
+[[workflows]]
+name = "paraacco-document-processing"
+binding = "DOCUMENT_PROCESSING_WORKFLOW"
+class_name = "DocumentProcessingWorkflow"
+
+# INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
+#   npx wrangler secret put INTERNAL_SERVICE_TOKEN
+# 要跟 apps/api 那邊設的值完全一樣。

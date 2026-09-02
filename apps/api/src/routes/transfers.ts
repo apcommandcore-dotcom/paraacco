@@ -1,8 +1,13 @@
 // 歸屬移轉與稽核 —— 規格 2.11、3.7-5。業務規則:移轉不得直接覆寫歸屬欄位,必須走
 // 申請(pending)→ 核准(approved,實際變更 purchases/assets.ownership)或駁回(rejected)。
+//
+// v2:ownership 不再有 'transfer' 這個中繼值(見 schema.ts 開頭的範圍決策)—— 申請期間
+// purchases/assets.ownership 維持原值不變,前端「移轉中」徽章是靠「這個 targetId 有一筆
+// status='pending' 的 transfers 列」推導出來的,不是查 ownership 欄位。核准後才真的改
+// ownership。欄位名稱對齊 schema v2 的 requestedByMemberId/approvedByMemberId。
 
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { activityLog, assets, createDb, nextId, purchases, transfers } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
@@ -15,6 +20,19 @@ transfersRoute.get("/", async (c) => {
   return c.json({ transfers: rows });
 });
 
+// 前端顯示「移轉中」徽章用:某個 target 目前是否有 pending 申請。
+transfersRoute.get("/pending-for/:targetType/:targetId", async (c) => {
+  const db = createDb(c.env.DB);
+  const targetType = c.req.param("targetType");
+  const targetId = c.req.param("targetId");
+  const [row] = await db
+    .select()
+    .from(transfers)
+    .where(and(eq(transfers.targetType, targetType), eq(transfers.targetId, targetId), eq(transfers.status, "pending")))
+    .limit(1);
+  return c.json({ pending: row ?? null });
+});
+
 transfersRoute.post("/", async (c) => {
   const auth = c.get("auth");
   if (!canWrite(auth.scope) || !auth.memberId) return c.json({ error: "forbidden" }, 403);
@@ -25,6 +43,7 @@ transfersRoute.post("/", async (c) => {
     fromOwnership: string;
     toOwnership: string;
     reason: string;
+    impactJson?: string;
   }>();
 
   const db = createDb(c.env.DB);
@@ -37,7 +56,8 @@ transfersRoute.post("/", async (c) => {
     fromOwnership: body.fromOwnership,
     toOwnership: body.toOwnership,
     reason: body.reason,
-    requestedBy: auth.memberId,
+    impactJson: body.impactJson ?? null,
+    requestedByMemberId: auth.memberId,
     status: "pending",
   });
 
@@ -58,7 +78,7 @@ transfersRoute.post("/:id/decide", async (c) => {
   if (auth.scope !== "personal_corp") return c.json({ error: "forbidden" }, 403);
 
   const id = c.req.param("id");
-  const body = await c.req.json<{ approve: boolean }>();
+  const body = await c.req.json<{ approve: boolean; decisionNote?: string }>();
   const db = createDb(c.env.DB);
 
   const [t] = await db.select().from(transfers).where(eq(transfers.id, id)).limit(1);
@@ -69,7 +89,8 @@ transfersRoute.post("/:id/decide", async (c) => {
     .update(transfers)
     .set({
       status: body.approve ? "approved" : "rejected",
-      approvedBy: auth.memberId,
+      approvedByMemberId: auth.memberId,
+      decisionNote: body.decisionNote ?? null,
       decidedAt: new Date().toISOString(),
     })
     .where(eq(transfers.id, id));

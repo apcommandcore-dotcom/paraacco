@@ -1,4 +1,4 @@
-// 資產 —— 規格 2.4、3.2(清單頁「依資產」view)。
+// 資產 —— 規格 2.4、3.2(清單頁「依資產」view)。v2:新增 createdByMemberId。
 
 import { Hono } from "hono";
 import { desc, eq } from "drizzle-orm";
@@ -62,6 +62,7 @@ assetsRoute.post("/", async (c) => {
     warrantyEndDate: body.warrantyEndDate ?? null,
     purchaseId: body.purchaseId ?? null,
     status: "active",
+    createdByMemberId: auth.memberId,
   });
 
   return c.json({ ok: true, id }, 201);
