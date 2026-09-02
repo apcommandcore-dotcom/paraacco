@@ -1,0 +1,10 @@
+name = "paraacco-document-worker"
+main = "src/index.ts"
+compatibility_date = "2026-09-02"
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "paraacco-files"
+
+# 這個 worker 刻意不掛 D1 binding——所有寫入(OCR 結果、文件狀態更新)一律呼叫
+# paraacco-api 既有的端點,不直接寫資料庫。
