@@ -11,7 +11,7 @@ export interface OcrExtractedField {
   normalizedValue?: string;
   /** 這個欄位單獨的辨識信心分數 0–100,供 @paraacco/domain 的 calculateOverallConfidence() 使用。 */
   confidence?: number;
-  extractionSource: "ocr" | "qr" | "ai_inference";
+  extractionSource: "ocr" | "qr" | "ai_inference" | "user_input";
   sourceNote?: string;
   pageNumber?: number;
   bboxJson?: string;

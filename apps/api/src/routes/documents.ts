@@ -19,6 +19,7 @@ import {
   documents,
   nextId,
   relationCandidates,
+  syncDocumentFts,
 } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
@@ -65,6 +66,15 @@ documentsRoute.post("/", async (c) => {
     r2Key: string;
     sha256?: string;
     source: string; // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import'
+    // 人工 OCR(md 交接)接回 pipeline 用 —— 有帶的話,extractionSource 一律由伺服器端強制
+    // 設成 'user_input',不採信 client 傳來的值,避免有人假造成看起來像自動 OCR 的高信心結果
+    // (見 CODE_TASK_manual-ocr-pipeline-integration_20260904.md)。
+    extractedFields?: Array<{
+      fieldKey: string;
+      label: string;
+      value?: string;
+      confidence?: number;
+    }>;
   }>();
 
   const db = createDb(c.env.DB);
@@ -97,6 +107,21 @@ documentsRoute.post("/", async (c) => {
     stageKey: "queued",
     status: "queued",
   });
+
+  if (body.extractedFields?.length) {
+    await db.insert(documentExtractedFields).values(
+      body.extractedFields.map((f, i) => ({
+        documentId: id,
+        fieldKey: f.fieldKey,
+        label: f.label,
+        value: f.value ?? null,
+        confidence: f.confidence ?? null,
+        extractionSource: "user_input",
+        sortOrder: i,
+      })),
+    );
+    await syncDocumentFts(db, id);
+  }
 
   await db.insert(activityLog).values({
     entityType: "document",
