@@ -52,7 +52,7 @@ function DocumentsList() {
 
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(searchParams.get("q") ?? "");
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +70,13 @@ function DocumentsList() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // 從 app-shell 的全域搜尋框導過來時(?q=),就算已經在 /documents 頁面上、元件沒有重新
+  // mount,也要同步搜尋框的值——router.push 不會重置 useState 的初始值。
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) setQuery(q);
+  }, [searchParams]);
 
   useEffect(() => {
     if (!selectedId) {
