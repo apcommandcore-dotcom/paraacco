@@ -11,13 +11,17 @@
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { calculateOverallConfidence, type FieldConfidenceInput } from "@paraacco/domain";
-import { MockOcrProvider, type OcrExtractionResult, type OcrProvider } from "@paraacco/ocr";
+import { GeminiOcrProvider, type OcrExtractionResult, type OcrProvider } from "@paraacco/ocr";
 import type { Bindings, DocumentWorkflowParams } from "./bindings";
 import { callInternal } from "./internal-client";
 
-// 尚未選定實際 OCR 供應商(規格文件缺口清單第 1 點)—— 見 MockOcrProvider 註解,
-// 之後串接實際供應商時只需要換掉這個變數指到新的 OcrProvider 實作。
-const ocrProvider: OcrProvider = new MockOcrProvider();
+// 實際 OCR/欄位擷取供應商(2026-09-04 決策,取代先前的 MockOcrProvider 佔位——
+// MockOcrProvider、CloudflareWorkersAiOcrProvider 仍保留在 @paraacco/ocr,供備援/本機測試
+// 切換回去用。見 GeminiOcrProvider 檔案開頭註解:選型理由、費用、信心分數是保守固定基準值,
+// 待真實單據測試後再調整。
+function createOcrProvider(env: Bindings): OcrProvider {
+  return new GeminiOcrProvider({ apiKey: env.GEMINI_API_KEY });
+}
 
 interface DocumentFileRow {
   id: number;
@@ -103,6 +107,7 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
   async run(event: WorkflowEvent<DocumentWorkflowParams>, step: WorkflowStep): Promise<unknown> {
     const { documentId, jobId } = event.payload;
     const env = this.env;
+    const ocrProvider = createOcrProvider(env);
 
     try {
       // 階段 1(queued):Workflow 實例本身被建立、開始執行就代表這步完成,只需要記錄。
