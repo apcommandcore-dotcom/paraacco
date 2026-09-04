@@ -11,14 +11,16 @@
 // /api/whoami 不會有 Cf-Access-Authenticated-User-Email header,會顯示「未偵測到登入身分」
 // ——這是預期行為,不是 bug,見 paraacco-integration/paraacco-deployment-report-20260903.md。
 //
-// API 網域(NEXT_PUBLIC_API_BASE_URL):apps/web 目前還沒決定部署到哪個 Cloudflare
-// adapter、也還沒有自訂網域,先用環境變數指到目前已部署的 paraacco-api workers.dev網址,
-// 之後 web/api 都掛到 *.parallelserver.org 底下、走同網域(或至少同一個 Access 涵蓋範圍)
-// 時,把這個環境變數改掉或直接改回相對路徑「""」即可,不用動這支元件的邏輯。
+// API 網域(NEXT_PUBLIC_API_BASE_URL):apps/web 部署到 acco.parallelserver.org(見
+// apps/web/wrangler.toml),apps/api 部署到 acco-api.parallelserver.org(見
+// apps/api/wrangler.toml)——兩個都在 *.parallelserver.org 底下但不同子網域,所以還是跨網域
+// 呼叫(apps/api 的 CORS allowlist 已經把 acco.parallelserver.org 列進去,見
+// apps/api/src/index.ts 的 ALLOWED_WEB_ORIGINS)。本機開發可用 NEXT_PUBLIC_API_BASE_URL
+// 覆寫成 http://localhost:8787 之類的本機 wrangler dev 網址。
 
 import { useEffect, useState } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://paraacco-api.theolu.workers.dev";
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://acco-api.parallelserver.org";
 
 type Whoami = { email: string | null; name: string | null };
 
