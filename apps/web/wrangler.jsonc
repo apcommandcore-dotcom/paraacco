@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "paraacco-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-02",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      // Self-reference service binding(OpenNext 需要,見
+      // https://opennext.js.org/cloudflare/caching)——binding 名稱固定,service 名稱要跟
+      // 上面的 "name" 一致。
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "paraacco-web"
+    }
+  ],
+  // 自訂網域 —— 跟 apps/api 的 acco-api.parallelserver.org 一樣,掛到既有的
+  // *.parallelserver.org 萬用字元 Cloudflare Access Application 保護範圍內,不用另外設
+  // Access 規則。用 custom_domain,Cloudflare 部署時會自動幫這個子網域建好 DNS 紀錄。
+  "routes": [
+    {
+      "pattern": "acco.parallelserver.org",
+      "custom_domain": true
+    }
+  ]
+}
