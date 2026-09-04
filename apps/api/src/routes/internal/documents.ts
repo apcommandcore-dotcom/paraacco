@@ -42,8 +42,11 @@ internalDocumentsRoute.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const [doc] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
   if (!doc) return c.json({ error: "not_found" }, 404);
-  const files = await db.select().from(documentFiles).where(eq(documentFiles.documentId, id));
-  return c.json({ document: doc, files });
+  const [files, fields] = await Promise.all([
+    db.select().from(documentFiles).where(eq(documentFiles.documentId, id)),
+    db.select().from(documentExtractedFields).where(eq(documentExtractedFields.documentId, id)),
+  ]);
+  return c.json({ document: doc, files, fields });
 });
 
 // 階段 2(validating)之後、階段 3(ocr)開始前,把 R2 裡實際存在的檔案版本登記進

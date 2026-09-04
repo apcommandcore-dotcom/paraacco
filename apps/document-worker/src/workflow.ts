@@ -39,9 +39,20 @@ interface DocumentRow {
   [key: string]: unknown;
 }
 
+// document_extracted_fields 的一列 —— 人工 OCR(md 交接)接回 pipeline 用,見
+// CODE_TASK_manual-ocr-pipeline-integration_20260904.md。
+interface ExtractedFieldRow {
+  fieldKey: string;
+  label: string;
+  value: string | null;
+  confidence: number | null;
+  extractionSource: string;
+}
+
 interface DocumentDetailResponse {
   document: DocumentRow;
   files: DocumentFileRow[];
+  fields: ExtractedFieldRow[];
 }
 
 interface OriginalFileRef {
@@ -104,7 +115,7 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
       // 階段 2(validating):取得文件 + 原始檔案 metadata,若有 sha256 就做重複偵測。
       // 只把 step 需要的最小、明確可序列化的欄位傳出 step.do() 邊界(Workflow 的
       // step.do() 回傳值會被序列化快取,不接受帶 index signature 的寬鬆型別)。
-      const { original, duplicateOfDocumentId } = await step.do("stage-2-validating", async () => {
+      const { original, duplicateOfDocumentId, userInputFields } = await step.do("stage-2-validating", async () => {
         await logEvent(env, jobId, 2, "validating", "started");
         await updateJob(env, jobId, { currentStage: 2, stageKey: "validating" });
 
@@ -131,8 +142,13 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           duplicateOfDocumentId = dup.duplicateOfDocumentId;
         }
 
+        // 人工 OCR(md 交接)接回 pipeline:POST /api/documents 建立文件當下如果已經帶了
+        // extractedFields,這裡會先看到 extractionSource: 'user_input' 的欄位 —— 有的話
+        // 階段 3 完全不呼叫 Workers AI,直接用這些欄位組結果(見下方 stage-3-ocr)。
+        const userInputFields = detail.fields.filter((f) => f.extractionSource === "user_input");
+
         await logEvent(env, jobId, 2, "validating", "completed", { duplicateOfDocumentId });
-        return { original, duplicateOfDocumentId };
+        return { original, duplicateOfDocumentId, userInputFields };
       });
 
       if (duplicateOfDocumentId) {
@@ -146,10 +162,21 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         return { status: "dup", duplicateOfDocumentId };
       }
 
-      // 階段 3(ocr):把原始檔案從 R2 讀出來,交給 OCR provider。
+      // 階段 3(ocr):優先用人工 OCR(md 交接)的欄位,完全不呼叫 Workers AI;沒有的話才
+      // 照原本邏輯把原始檔案從 R2 讀出來,交給 OCR provider(見
+      // CODE_TASK_manual-ocr-pipeline-integration_20260904.md)。
       const ocrResult = await step.do("stage-3-ocr", async () => {
         await logEvent(env, jobId, 3, "ocr", "started");
         await updateJob(env, jobId, { currentStage: 3, stageKey: "ocr" });
+
+        if (userInputFields.length) {
+          const result = fieldsToExtractionResult(userInputFields);
+          await logEvent(env, jobId, 3, "ocr", "skipped", {
+            reason: "user_input fields present",
+            fieldCount: result.fields.length,
+          });
+          return result;
+        }
 
         const obj = await env.FILES.get(original.r2Key);
         if (!obj) throw new Error(`R2 object missing: ${original.r2Key}`);
@@ -273,6 +300,36 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
       throw err;
     }
   }
+}
+
+// 人工 OCR(md 交接)接回 pipeline:把 document_extracted_fields 裡 extractionSource
+// 'user_input' 的欄位轉回 OcrExtractionResult 的頂層摘要欄位形狀 —— 跟
+// cloudflare-workers-ai-provider.ts 的 toExtractionResult() 方向相反(那邊是「模型輸出 →
+// 攤平成欄位列表」,這裡是「已經存好的欄位列表 → 還原成頂層摘要」),邏輯類似。
+function fieldsToExtractionResult(rows: ExtractedFieldRow[]): OcrExtractionResult {
+  const byKey = new Map(rows.map((r) => [r.fieldKey, r.value ?? undefined]));
+  const amountCentsRaw = byKey.get("amountCents");
+
+  return {
+    fields: rows.map((r) => ({
+      fieldKey: r.fieldKey,
+      label: r.label,
+      value: r.value ?? undefined,
+      confidence: r.confidence ?? undefined,
+      extractionSource: "user_input",
+    })),
+    vendorNameRaw: byKey.get("vendorNameRaw"),
+    vendorTaxId: byKey.get("vendorTaxId"),
+    docTypeCode: byKey.get("docTypeCode"),
+    docDate: byKey.get("docDate"),
+    invoiceNo: byKey.get("invoiceNo"),
+    orderNo: byKey.get("orderNo"),
+    serialNo: byKey.get("serialNo"),
+    brand: byKey.get("brand"),
+    model: byKey.get("model"),
+    amountCents: amountCentsRaw !== undefined ? Number(amountCentsRaw) : undefined,
+    currency: byKey.get("currency") ?? "TWD",
+  };
 }
 
 function buildConfidenceInputs(ocrResult: OcrExtractionResult): FieldConfidenceInput[] {
