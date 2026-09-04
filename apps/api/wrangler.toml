@@ -15,6 +15,18 @@ bucket_name = "paraacco-files"
 binding = "DOCUMENT_QUEUE"
 queue = "paraacco-document-ingest"
 
+# 自訂網域 —— 掛到既有的 *.parallelserver.org 底下,讓這個 Worker 自動落在既有的
+# 「AP Internal Platform」Cloudflare Access Application(萬用字元涵蓋)保護範圍內,不用
+# 另外設 Access 規則。用 custom_domain(不是 path-based route),Cloudflare 部署時會自動幫這個
+# 子網域建好 DNS 紀錄,不需要手動先加 CNAME。
+#
+# 子網域名稱是建議值,不是定案 —— apps/web 之後決定部署方式時,可能會想把 acco.parallelserver.org
+# 留給前端整個網域、API 改用路徑(acco.parallelserver.org/api/*)走同網域避免 CORS。部署前
+# 請先確認這個名稱沒問題,或改成你想要的子網域。
+[[routes]]
+pattern = "acco-api.parallelserver.org"
+custom_domain = true
+
 # INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
 #   npx wrangler secret put INTERNAL_SERVICE_TOKEN
 # 要跟 apps/document-worker 那邊設的值完全一樣。
