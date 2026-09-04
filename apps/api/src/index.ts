@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { whoamiFromHeaders } from "./whoami";
 import { authMiddleware } from "./middleware/auth";
 import { internalAuthMiddleware } from "./middleware/internal-auth";
@@ -13,6 +14,23 @@ import { activityRoute } from "./routes/activity";
 import { internalRoute } from "./routes/internal";
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+// CORS —— apps/web 目前還沒決定部署網域(見 apps/web/app/page.tsx 開頭註解),暫時允許
+// 本機開發網址與規劃中的正式網域直接跨網域呼叫 /api/*(credentials: true,讓 Cloudflare
+// Access 的 session cookie 能跟著帶過去;/internal/* 不開 CORS,那個前綴不是給瀏覽器叫的)。
+// 之後 web/api 都定案掛到 *.parallelserver.org 底下、走同網域時,這層可以拿掉或收斂清單。
+const ALLOWED_WEB_ORIGINS = [
+  "http://localhost:3000",
+  "https://acco.parallelserver.org",
+  "https://acco-api.parallelserver.org",
+];
+app.use(
+  "/api/*",
+  cors({
+    origin: (origin) => (ALLOWED_WEB_ORIGINS.includes(origin) ? origin : ALLOWED_WEB_ORIGINS[0]),
+    credentials: true,
+  }),
+);
 
 // 掛在最前面,所有 /api/* 都會附上 c.get("auth")(email/memberId/role/scope)。
 // health、whoami 本身不需要驗證身分,但掛著無妨。
