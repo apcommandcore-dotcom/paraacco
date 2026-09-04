@@ -27,6 +27,18 @@ name = "paraacco-document-processing"
 binding = "DOCUMENT_PROCESSING_WORKFLOW"
 class_name = "DocumentProcessingWorkflow"
 
+# Workers AI —— 備援 OCR/欄位擷取供應商(2026-09-03 選定、2026-09-04 起改為備援,見
+# @paraacco/ocr 的 cloudflare-workers-ai-provider.ts 開頭註解)。有每日免費 Neuron 額度,
+# 不需要另外的 API Key/secret,帳號預設不會超額自動轉計費。
+[ai]
+binding = "AI"
+
 # INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
 #   npx wrangler secret put INTERNAL_SERVICE_TOKEN
 # 要跟 apps/api 那邊設的值完全一樣。
+#
+# GEMINI_API_KEY 一樣用 secret 設定,不寫在這裡:
+#   npx wrangler secret put GEMINI_API_KEY
+# 實際 OCR/欄位擷取供應商用(2026-09-04 決策,見 @paraacco/ocr 的 gemini-provider.ts 開頭
+# 註解)。申請 key 時務必用沒有連結 Cloud Billing 帳戶的 Google Cloud 專案,確保免費層
+# 保證不收費。
