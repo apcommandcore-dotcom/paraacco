@@ -67,6 +67,33 @@ documentsRoute.get("/:id", async (c) => {
   return c.json({ document: doc, fields, files, purchaseLinks, assetLinks, processingJob: jobs[0] ?? null });
 });
 
+// 待覆核工作台中欄要顯示原始檔案(PDF/圖片)——直接把 R2 物件內容串流回來,不给前端另外處理
+// R2 存取權限(bucket 本身不公開)。預設拿目前生效的 original 檔案,也可以用 ?kind= 指定其他
+// kind(例如之後有 normalized_pdf)。
+documentsRoute.get("/:id/file", async (c) => {
+  const db = createDb(c.env.DB);
+  const id = c.req.param("id");
+  const kind = c.req.query("kind") ?? "original";
+
+  const [file] = await db
+    .select()
+    .from(documentFiles)
+    .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, kind), eq(documentFiles.isCurrent, true)))
+    .limit(1);
+  if (!file) return c.json({ error: "not_found" }, 404);
+
+  const obj = await c.env.FILES.get(file.r2Key);
+  if (!obj) return c.json({ error: "file_missing_in_r2" }, 404);
+
+  return new Response(obj.body, {
+    headers: {
+      "Content-Type": file.mimeType,
+      "Content-Disposition": `inline; filename="${encodeURIComponent(file.originalFileName)}"`,
+      "Cache-Control": "private, max-age=300",
+    },
+  });
+});
+
 // 收件匣建立草稿紀錄 —— 檔案本身已由前端直接 PUT 到 R2 預簽 URL(kind='original'),這裡登記
 // documents + document_files metadata,開一個 processing job 佔位,並把 documentId 丟進
 // DOCUMENT_QUEUE 讓 document-worker 接手處理(見範圍決策:Queues + Workflows)。
