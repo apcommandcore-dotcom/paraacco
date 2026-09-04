@@ -7,7 +7,7 @@
 // Service Binding + 共用密鑰)。
 
 import { Hono } from "hono";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   activityLog,
   createDb,
@@ -32,7 +32,22 @@ documentsRoute.get("/", async (c) => {
   const rows = status
     ? await db.select().from(documents).where(eq(documents.status, status)).orderBy(desc(documents.createdAt))
     : await db.select().from(documents).orderBy(desc(documents.createdAt));
-  return c.json({ documents: rows });
+
+  // 收件匣畫面要顯示 pipeline 進度(8 步驟簡化版:current_stage/stage_key)——一份文件
+  // 可能因為 retry 累積多筆 job(見 CODE_REPORT_queue-consumer-fix-retest_20260904.md 的
+  // 副作用發現),這裡只取每份文件最新建立的那一筆。
+  const jobs = rows.length
+    ? await db.select().from(documentProcessingJobs).where(inArray(documentProcessingJobs.documentId, rows.map((r) => r.id)))
+    : [];
+  const latestJobByDoc = new Map<string, (typeof jobs)[number]>();
+  for (const job of jobs) {
+    const existing = latestJobByDoc.get(job.documentId);
+    if (!existing || job.createdAt > existing.createdAt) latestJobByDoc.set(job.documentId, job);
+  }
+
+  return c.json({
+    documents: rows.map((doc) => ({ ...doc, processingJob: latestJobByDoc.get(doc.id) ?? null })),
+  });
 });
 
 documentsRoute.get("/:id", async (c) => {
@@ -41,14 +56,15 @@ documentsRoute.get("/:id", async (c) => {
   const [doc] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
   if (!doc) return c.json({ error: "not_found" }, 404);
 
-  const [fields, files, purchaseLinks, assetLinks] = await Promise.all([
+  const [fields, files, purchaseLinks, assetLinks, jobs] = await Promise.all([
     db.select().from(documentExtractedFields).where(eq(documentExtractedFields.documentId, id)).orderBy(documentExtractedFields.sortOrder),
     db.select().from(documentFiles).where(eq(documentFiles.documentId, id)),
     db.select().from(documentPurchaseLinks).where(eq(documentPurchaseLinks.documentId, id)),
     db.select().from(documentAssetLinks).where(eq(documentAssetLinks.documentId, id)),
+    db.select().from(documentProcessingJobs).where(eq(documentProcessingJobs.documentId, id)).orderBy(desc(documentProcessingJobs.createdAt)),
   ]);
 
-  return c.json({ document: doc, fields, files, purchaseLinks, assetLinks });
+  return c.json({ document: doc, fields, files, purchaseLinks, assetLinks, processingJob: jobs[0] ?? null });
 });
 
 // 收件匣建立草稿紀錄 —— 檔案本身已由前端直接 PUT 到 R2 預簽 URL(kind='original'),這裡登記

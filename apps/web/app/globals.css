@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 設計 token —— 黑白線框風格(比照 app/page.tsx 既有的 #171717/#F6F6F3 調色盤,規格文件
+   第 4 節)。深色模式用 <html data-theme="dark">,不跟隨系統 prefers-color-scheme,由使用者
+   手動切換(見 components/theme-toggle.tsx)。 */
+:root {
+  --background: 60 9% 97%;
+  --foreground: 0 0% 9%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 9%;
+  --muted: 60 5% 92%;
+  --muted-foreground: 60 2% 52%;
+  --border: 0 0% 9%;
+  --input: 0 0% 82%;
+  --ring: 0 0% 9%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 60 9% 97%;
+  --secondary: 60 9% 97%;
+  --secondary-foreground: 0 0% 9%;
+  --accent: 60 9% 93%;
+  --accent-foreground: 0 0% 9%;
+  --destructive: 5 45% 47%;
+  --destructive-foreground: 0 0% 100%;
+  --warning: 35 60% 43%;
+  --warning-foreground: 0 0% 100%;
+}
+
+[data-theme="dark"] {
+  --background: 0 0% 7%;
+  --foreground: 60 9% 95%;
+  --card: 0 0% 11%;
+  --card-foreground: 60 9% 95%;
+  --muted: 0 0% 16%;
+  --muted-foreground: 0 0% 62%;
+  --border: 0 0% 30%;
+  --input: 0 0% 25%;
+  --ring: 60 9% 90%;
+  --primary: 60 9% 95%;
+  --primary-foreground: 0 0% 9%;
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 60 9% 95%;
+  --accent: 0 0% 16%;
+  --accent-foreground: 60 9% 95%;
+  --destructive: 5 55% 58%;
+  --destructive-foreground: 0 0% 9%;
+  --warning: 35 65% 58%;
+  --warning-foreground: 0 0% 9%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
