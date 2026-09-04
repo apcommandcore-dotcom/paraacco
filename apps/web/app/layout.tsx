@@ -20,7 +20,11 @@ const themeInitScript = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="zh-Hant">
+    // suppressHydrationWarning:themeInitScript 會在 hydration 前用 imperative DOM API
+    // 幫 <html> 加上 data-theme,React 的伺服器渲染結果本來就不會有這個屬性(值只存在
+    // localStorage,伺服器端不知道)——這是預期的一次性差異,不是真正的 hydration bug,
+    // 比照 next-themes 這類套件的標準做法加這個屬性讓 React 不要為了這一個屬性報警告。
+    <html lang="zh-Hant" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
