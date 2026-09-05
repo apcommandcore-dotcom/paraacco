@@ -106,6 +106,11 @@ export interface DocumentFile {
   isCurrent: boolean;
 }
 
+export interface MatchReason {
+  label: string;
+  points: number;
+}
+
 export interface RelationCandidate {
   id: number;
   documentId: string;
@@ -113,8 +118,27 @@ export interface RelationCandidate {
   targetId: string;
   score: number;
   rawScore: number;
-  reasons: unknown[];
+  reasons: MatchReason[];
   decision: "pending" | "accepted" | "superseded" | "rejected";
+}
+
+export interface PurchaseRow {
+  id: string;
+  vendorNameRaw: string;
+  summary: string;
+  amountCents: number;
+  currency: string;
+  purchaseDate: string;
+  status: string;
+}
+
+export interface AssetRow {
+  id: string;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  serialNo: string | null;
+  status: string;
 }
 
 export const STAGE_LABELS: Record<string, string> = {

@@ -7,10 +7,11 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   apiFetch,
@@ -19,6 +20,8 @@ import {
   type ExtractedField,
   type DocumentFile,
   type RelationCandidate,
+  type PurchaseRow,
+  type AssetRow,
 } from "@/lib/api";
 
 interface DocumentDetail {
@@ -45,6 +48,13 @@ function ReviewWorkbench() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 手動搜尋既有採購案/資產來配對——沒有 pipeline 算出來的候選時(或候選都不對)不該卡住,
+  // 讓使用者自己找。先求能動:一次抓全部 purchases/assets 在前端篩選,資料量對內部工具來說
+  //還小(跟 Dashboard/Reports 頁同樣的作法)。
+  const [manualQuery, setManualQuery] = useState("");
+  const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
+  const [assets, setAssets] = useState<AssetRow[] | null>(null);
+
   const loadQueue = useCallback(async () => {
     try {
       const data = await apiFetch<{ documents: DocumentRow[] }>("/api/documents?status=review");
@@ -70,6 +80,7 @@ function ReviewWorkbench() {
     }
     setDetail(null);
     setCandidates(null);
+    setManualQuery("");
     apiFetch<DocumentDetail>(`/api/documents/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
@@ -77,6 +88,21 @@ function ReviewWorkbench() {
       .then((d) => setCandidates(d.candidates))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [selectedId]);
+
+  // 手動搜尋清單只在第一次真的需要時才抓(候選都用完、或使用者主動要找),不用每次選文件
+  // 都重抓一次全部採購案/資產。
+  function loadManualSearchData() {
+    if (purchases === null) {
+      apiFetch<{ purchases: PurchaseRow[] }>("/api/purchases")
+        .then((d) => setPurchases(d.purchases))
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }
+    if (assets === null) {
+      apiFetch<{ assets: AssetRow[] }>("/api/assets")
+        .then((d) => setAssets(d.assets))
+        .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    }
+  }
 
   async function refreshAfterAction() {
     await loadQueue();
@@ -91,6 +117,25 @@ function ReviewWorkbench() {
       await apiFetch(`/api/documents/${selectedId}/link`, {
         method: "POST",
         body: JSON.stringify({ targetType: candidate.targetType, targetId: candidate.targetId, candidateId: candidate.id }),
+      });
+      await refreshAfterAction();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function linkManual(targetType: "purchase" | "asset", targetId: string) {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // 手動配對沒有 candidateId——POST /:id/link 本來就把它設計成可選,不帶的話只會連結
+      // 這一筆,不會動到其他 pending 候選的狀態。
+      await apiFetch(`/api/documents/${selectedId}/link`, {
+        method: "POST",
+        body: JSON.stringify({ targetType, targetId }),
       });
       await refreshAfterAction();
     } catch (err) {
@@ -221,9 +266,12 @@ function ReviewWorkbench() {
                   </span>
                   <Badge variant={cand.score >= 80 ? "success" : "outline"}>{cand.score}</Badge>
                 </div>
-                <ul className="mb-2 list-disc pl-4 text-xs text-muted-foreground">
+                <ul className="mb-2 list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
                   {cand.reasons.map((reason, i) => (
-                    <li key={i}>{String(reason)}</li>
+                    <li key={i}>
+                      {reason.label}
+                      <span className="ml-1 font-mono">+{reason.points}</span>
+                    </li>
                   ))}
                 </ul>
                 <Button size="sm" className="w-full" disabled={busy} onClick={() => linkCandidate(cand)}>
@@ -232,6 +280,45 @@ function ReviewWorkbench() {
                 </Button>
               </div>
             ))}
+
+            {detail && (
+              <div className="border-t border-border pt-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">手動搜尋配對</span>
+                  {purchases === null && assets === null && (
+                    <Button variant="ghost" size="sm" onClick={loadManualSearchData}>
+                      <Search size={12} className="mr-1" />
+                      載入清單
+                    </Button>
+                  )}
+                </div>
+                {(purchases !== null || assets !== null) && (
+                  <>
+                    <Input
+                      value={manualQuery}
+                      onChange={(e) => setManualQuery(e.target.value)}
+                      placeholder="搜尋採購案/資產…"
+                      className="mb-2"
+                    />
+                    <div className="max-h-48 space-y-1 overflow-y-auto">
+                      {manualMatches(purchases, assets, manualQuery).map((m) => (
+                        <div key={`${m.targetType}-${m.targetId}`} className="flex items-center justify-between border border-border p-2 text-xs">
+                          <span className="truncate">
+                            {m.targetType === "purchase" ? "採購案" : "資產"} {m.targetId}・{m.label}
+                          </span>
+                          <Button size="sm" variant="outline" disabled={busy} onClick={() => linkManual(m.targetType, m.targetId)}>
+                            連結
+                          </Button>
+                        </div>
+                      ))}
+                      {manualQuery && manualMatches(purchases, assets, manualQuery).length === 0 && (
+                        <p className="text-xs text-muted-foreground">沒有符合的結果。</p>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {detail && (
               <div className="space-y-2 border-t border-border pt-3">
@@ -252,6 +339,30 @@ function ReviewWorkbench() {
       </div>
     </AppShell>
   );
+}
+
+function manualMatches(
+  purchases: PurchaseRow[] | null,
+  assets: AssetRow[] | null,
+  query: string,
+): Array<{ targetType: "purchase" | "asset"; targetId: string; label: string }> {
+  const q = query.trim().toLowerCase();
+  const purchaseMatches = (purchases ?? [])
+    .filter((p) => !q || p.id.toLowerCase().includes(q) || p.vendorNameRaw.toLowerCase().includes(q) || p.summary.toLowerCase().includes(q))
+    .slice(0, 20)
+    .map((p) => ({ targetType: "purchase" as const, targetId: p.id, label: `${p.vendorNameRaw}・${p.summary}` }));
+  const assetMatches = (assets ?? [])
+    .filter(
+      (a) =>
+        !q ||
+        a.id.toLowerCase().includes(q) ||
+        a.name.toLowerCase().includes(q) ||
+        (a.serialNo ?? "").toLowerCase().includes(q) ||
+        (a.model ?? "").toLowerCase().includes(q),
+    )
+    .slice(0, 20)
+    .map((a) => ({ targetType: "asset" as const, targetId: a.id, label: a.name }));
+  return [...purchaseMatches, ...assetMatches];
 }
 
 export default function ReviewPage() {
