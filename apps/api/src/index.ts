@@ -5,6 +5,7 @@ import { authMiddleware } from "./middleware/auth";
 import { internalAuthMiddleware } from "./middleware/internal-auth";
 import type { Bindings } from "./bindings";
 import { vendorsRoute } from "./routes/vendors";
+import { categoriesRoute } from "./routes/categories";
 import { purchasesRoute } from "./routes/purchases";
 import { assetsRoute } from "./routes/assets";
 import { documentsRoute } from "./routes/documents";
@@ -48,6 +49,7 @@ app.use("/api/*", authMiddleware());
 
 // 所有寫入(採購/資產/文件)一律經過這裡的端點,document-worker 不可直接寫 D1。
 app.route("/api/vendors", vendorsRoute);
+app.route("/api/categories", categoriesRoute);
 app.route("/api/purchases", purchasesRoute);
 app.route("/api/assets", assetsRoute);
 app.route("/api/documents", documentsRoute);
