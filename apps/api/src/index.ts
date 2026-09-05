@@ -33,12 +33,17 @@ app.use(
   }),
 );
 
-// 掛在最前面,所有 /api/* 都會附上 c.get("auth")(email/memberId/role/scope)。
-// health、whoami 本身不需要驗證身分,但掛著無妨。
-app.use("/api/*", authMiddleware());
-
+// health 刻意排在 authMiddleware 之前註冊,完全不用經過 JWT 驗證(健康檢查本來就該公開、
+// 該快,不該依賴 Access JWKS 這個外部相依)。whoami 也排在前面——它自己直接呼叫
+// whoamiFromHeaders() 算出身分,不需要 authMiddleware 幫它另外驗證一次(避免同一個
+// JWT 被驗證兩次)。
 app.get("/api/health", (c) => c.json({ ok: true, service: "paraacco-api" }));
-app.get("/api/whoami", (c) => c.json(whoamiFromHeaders(c.req.raw.headers)));
+app.get("/api/whoami", async (c) => c.json(await whoamiFromHeaders(c.req.raw.headers)));
+
+// 掛在這之後,其餘所有 /api/* 都會附上 c.get("auth")(email/memberId/role/scope)——
+// email 來自驗證過簽章的 Cloudflare Access JWT(見 access-jwt.ts),不是直接信任
+// client 可能偽造的 header。
+app.use("/api/*", authMiddleware());
 
 // 所有寫入(採購/資產/文件)一律經過這裡的端點,document-worker 不可直接寫 D1。
 app.route("/api/vendors", vendorsRoute);

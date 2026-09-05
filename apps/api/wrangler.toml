@@ -2,6 +2,12 @@ name = "paraacco-api"
 main = "src/index.ts"
 compatibility_date = "2026-09-02"
 
+# 明確關掉 *.workers.dev 這個預設網址(2026-09-06,見 src/access-jwt.ts 開頭註解)——
+# 這個網址不受 Cloudflare Access 保護,只留自訂網域這一個進來的路徑,降低攻擊面。就算
+# workers.dev 網址還開著,現在 whoami.ts 也已經改成驗證 JWT 簽章、不再直接信任 header,
+# 這裡是額外一層縱深防禦,不是唯一防線。
+workers_dev = false
+
 [[d1_databases]]
 binding = "DB"
 database_name = "paraacco-db"

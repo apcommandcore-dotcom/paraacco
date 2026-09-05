@@ -32,7 +32,7 @@ declare module "hono" {
 
 export function authMiddleware(): MiddlewareHandler<{ Bindings: Bindings }> {
   return async (c, next) => {
-    const who = whoamiFromHeaders(c.req.raw.headers);
+    const who = await whoamiFromHeaders(c.req.raw.headers);
     let auth: AuthContext = { email: who.email, memberId: null, name: who.name, role: null, scope: null };
 
     if (who.email) {

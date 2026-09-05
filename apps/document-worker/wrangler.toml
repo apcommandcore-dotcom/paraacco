@@ -2,6 +2,11 @@ name = "paraacco-document-worker"
 main = "src/index.ts"
 compatibility_date = "2026-09-02"
 
+# 這個 worker 沒有任何公開 HTTP 用途(fetch() 一律回 404,只靠 queue consumer 跟 Service
+# Binding 被呼叫),明確關掉 *.workers.dev 網址,不留不必要的公開入口
+# (見 apps/api/wrangler.toml、src/access-jwt.ts 同一批安全性補強,2026-09-06)。
+workers_dev = false
+
 [[r2_buckets]]
 binding = "FILES"
 bucket_name = "paraacco-files"
