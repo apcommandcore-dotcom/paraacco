@@ -1,0 +1,8 @@
+[
+  {
+    "AllowedOrigins": ["https://acco.parallelserver.org", "http://localhost:3000"],
+    "AllowedMethods": ["PUT"],
+    "AllowedHeaders": ["content-type"],
+    "MaxAgeSeconds": 3600
+  }
+]

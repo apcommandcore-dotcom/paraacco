@@ -1,11 +1,15 @@
 "use client";
 
-// 收件匣(規格 3.5.1)—— Phase 1:拖放上傳 + 處理佇列。8 步驟進度先做簡化版(純文字顯示
-// current_stage/stage_key),不做視覺化進度條,見 CODE_TASK_go-live-a2-a3-phase1_20260904.md
-// Phase 1 範圍說明。
+// 收件匣(規格 3.5.1)—— 拖放上傳 + 處理佇列。8 步驟進度先做簡化版(純文字顯示
+// current_stage/stage_key),不做視覺化進度條。
+//
+// 上傳流程(2026-09-06 改成預簽 URL 直傳 R2,見 CODE_TASK_post-golive-hardening_20260905.md
+// 任務 2):POST /api/uploads/presign 拿簽好的 URL → 瀏覽器直接 PUT 到 R2(用 XHR 而不是
+// fetch,才能拿到 upload progress 事件)→ sha256 用 Web Crypto 在瀏覽器端算 → POST
+// /api/documents 登記文件。失敗可以針對單一檔案重試,不用整批重來。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { UploadCloud, RefreshCw, AlertTriangle } from "lucide-react";
+import { UploadCloud, RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,9 +28,28 @@ const OWNERSHIP_LABELS: Record<OwnershipOption, string> = {
 
 interface UploadTask {
   id: string;
-  fileName: string;
+  file: File;
   status: "uploading" | "registering" | "done" | "error";
+  progress: number; // 0-100,只算 R2 上傳這段(登記那次 API call 很快,不特別算進度)
   error?: string;
+}
+
+function sha256Hex(bytes: ArrayBuffer): Promise<string> {
+  return crypto.subtle.digest("SHA-256", bytes).then((digest) => [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join(""));
+}
+
+function putWithProgress(url: string, file: File, contentType: string, onProgress: (pct: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", url);
+    if (contentType) xhr.setRequestHeader("Content-Type", contentType);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`R2 上傳失敗(HTTP ${xhr.status}）`)));
+    xhr.onerror = () => reject(new Error("R2 上傳失敗(網路錯誤,檢查是否有防火牆/VPN 擋住 R2 直連)"));
+    xhr.send(file);
+  });
 }
 
 export default function InboxPage() {
@@ -55,45 +78,68 @@ export default function InboxPage() {
     return () => clearInterval(timer);
   }, [loadDocuments]);
 
-  const uploadFiles = useCallback(
-    async (files: FileList | File[]) => {
-      for (const file of Array.from(files)) {
-        const taskId = crypto.randomUUID();
-        setTasks((prev) => [...prev, { id: taskId, fileName: file.name, status: "uploading" }]);
-        try {
-          const form = new FormData();
-          form.append("file", file);
-          const uploaded = await apiFetch<{ r2Key: string; fileName: string; mimeType: string; byteSize: number; sha256: string }>(
-            "/api/uploads",
-            { method: "POST", body: form },
-          );
+  const runUpload = useCallback(
+    async (taskId: string, file: File) => {
+      try {
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "uploading", progress: 0, error: undefined } : t)));
 
-          setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "registering" } : t)));
+        const presign = await apiFetch<{ uploadUrl: string; r2Key: string }>("/api/uploads/presign", {
+          method: "POST",
+          body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream" }),
+        });
 
-          await apiFetch<{ ok: true; id: string }>("/api/documents", {
-            method: "POST",
-            body: JSON.stringify({
-              ownership,
-              fileName: uploaded.fileName,
-              mimeType: uploaded.mimeType,
-              byteSize: uploaded.byteSize,
-              r2Key: uploaded.r2Key,
-              sha256: uploaded.sha256,
-              source: "web_upload",
-            }),
-          });
+        await putWithProgress(presign.uploadUrl, file, file.type || "application/octet-stream", (pct) =>
+          setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t))),
+        );
 
-          setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "done" } : t)));
-        } catch (err) {
-          setTasks((prev) =>
-            prev.map((t) => (t.id === taskId ? { ...t, status: "error", error: err instanceof Error ? err.message : String(err) } : t)),
-          );
-        }
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "registering" } : t)));
+
+        const bytes = await file.arrayBuffer();
+        const sha256 = await sha256Hex(bytes);
+
+        await apiFetch<{ ok: true; id: string }>("/api/documents", {
+          method: "POST",
+          body: JSON.stringify({
+            ownership,
+            fileName: file.name,
+            mimeType: file.type || "application/octet-stream",
+            byteSize: bytes.byteLength,
+            r2Key: presign.r2Key,
+            sha256,
+            source: "web_upload",
+          }),
+        });
+
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "done", progress: 100 } : t)));
+        loadDocuments();
+      } catch (err) {
+        setTasks((prev) =>
+          prev.map((t) => (t.id === taskId ? { ...t, status: "error", error: err instanceof Error ? err.message : String(err) } : t)),
+        );
       }
-      loadDocuments();
     },
     [ownership, loadDocuments],
   );
+
+  const uploadFiles = useCallback(
+    (files: FileList | File[]) => {
+      for (const file of Array.from(files)) {
+        const taskId = crypto.randomUUID();
+        setTasks((prev) => [...prev, { id: taskId, file, status: "uploading", progress: 0 }]);
+        runUpload(taskId, file);
+      }
+    },
+    [runUpload],
+  );
+
+  function retryTask(task: UploadTask) {
+    runUpload(task.id, task.file);
+  }
+
+  const pendingCount = tasks.filter((t) => t.status === "uploading" || t.status === "registering").length;
+  const overallProgress = tasks.length
+    ? Math.round(tasks.reduce((sum, t) => sum + (t.status === "done" ? 100 : t.status === "error" ? 0 : t.progress), 0) / tasks.length)
+    : 0;
 
   return (
     <AppShell>
@@ -143,7 +189,7 @@ export default function InboxPage() {
           >
             <UploadCloud size={28} className="text-muted-foreground" />
             <p className="text-sm">拖放 PDF / 圖片到這裡,或點擊選擇檔案</p>
-            <p className="text-xs text-muted-foreground">單檔上限 25MB</p>
+            <p className="text-xs text-muted-foreground">單檔上限 25MB,直接上傳到 R2</p>
             <input
               ref={fileInputRef}
               type="file"
@@ -155,20 +201,41 @@ export default function InboxPage() {
           </div>
 
           {tasks.length > 0 && (
-            <ul className="mt-4 space-y-1 text-xs">
-              {tasks.map((t) => (
-                <li key={t.id} className="flex items-center gap-2">
-                  <span className="font-mono text-muted-foreground">
-                    {t.status === "uploading" && "上傳中…"}
-                    {t.status === "registering" && "登記中…"}
-                    {t.status === "done" && "完成"}
-                    {t.status === "error" && "失敗"}
-                  </span>
-                  <span>{t.fileName}</span>
-                  {t.error && <span className="text-destructive">{t.error}</span>}
-                </li>
-              ))}
-            </ul>
+            <div className="mt-4 space-y-3">
+              {tasks.length > 1 && (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      整體進度({tasks.length - pendingCount}/{tasks.length} 完成)
+                    </span>
+                    <span>{overallProgress}%</span>
+                  </div>
+                  <div className="h-1.5 w-full bg-muted">
+                    <div className="h-1.5 bg-primary transition-all" style={{ width: `${overallProgress}%` }} />
+                  </div>
+                </div>
+              )}
+              <ul className="space-y-1 text-xs">
+                {tasks.map((t) => (
+                  <li key={t.id} className="flex items-center gap-2">
+                    <span className="w-16 shrink-0 font-mono text-muted-foreground">
+                      {t.status === "uploading" && `上傳 ${t.progress}%`}
+                      {t.status === "registering" && "登記中…"}
+                      {t.status === "done" && "完成"}
+                      {t.status === "error" && "失敗"}
+                    </span>
+                    <span className="truncate">{t.file.name}</span>
+                    {t.error && <span className="truncate text-destructive">{t.error}</span>}
+                    {t.status === "error" && (
+                      <Button variant="ghost" size="sm" onClick={() => retryTask(t)} className="ml-auto shrink-0">
+                        <RotateCcw size={12} className="mr-1" />
+                        重試
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
         </CardContent>
       </Card>

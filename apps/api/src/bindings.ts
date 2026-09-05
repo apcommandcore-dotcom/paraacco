@@ -5,6 +5,15 @@
 // INTERNAL_SERVICE_TOKEN:document-worker 透過 Service Binding 呼叫這裡的 /internal/* 端點時
 // 帶的共用密鑰,取代給人類用的 Cloudflare Access 驗證(Service Binding 是 Worker 對 Worker
 // 的直接呼叫,不會經過 Access,所以需要自己的一層驗證,見 middleware/internal-auth.ts)。
+//
+// R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_ACCOUNT_ID:2026-09-06 補上,給
+// routes/uploads.ts 簽發 R2 預簽 URL 用(見該檔案開頭註解)。這三個不是 R2 binding 本身
+// 能提供的東西——預簽 URL 是 S3 相容 API 的簽章機制,要用 R2 的 S3 API token(不是
+// Cloudflare 帳號的 API Token),申請路徑:Cloudflare Dashboard → R2 → Manage R2 API
+// Tokens → Create API Token(Object Read & Write 權限即可,不用 Admin)。設定:
+//   npx wrangler secret put R2_ACCESS_KEY_ID
+//   npx wrangler secret put R2_SECRET_ACCESS_KEY
+//   npx wrangler secret put R2_ACCOUNT_ID   (Cloudflare 帳號 ID,不是 API Token 本身)
 
 export type DocumentQueueMessage = {
   documentId: string;
@@ -17,4 +26,7 @@ export type Bindings = {
   FILES: R2Bucket;
   DOCUMENT_QUEUE: Queue<DocumentQueueMessage>;
   INTERNAL_SERVICE_TOKEN: string;
+  R2_ACCESS_KEY_ID: string;
+  R2_SECRET_ACCESS_KEY: string;
+  R2_ACCOUNT_ID: string;
 };
