@@ -17,13 +17,14 @@ const NAV = [
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
-  // 全域搜尋(規格 3.6)—— 先求能動:導到文件列表頁,帶 ?q= 由那邊的既有關鍵字篩選處理
-  // (文件編號/供應商/發票號碼),沒有另外做跨採購案/資產的全文檢索頁,量體大了再考慮接
-  // packages/db 已經有的 document FTS(見 syncDocumentFts)做真正的全文搜尋。
+  // 全域搜尋(規格 3.6)—— 導到 /search,接 GET /api/search,是 packages/db 已經實作好的
+  // document FTS5 全文檢索(見 packages/db/src/search.ts 的 searchDocumentFts),涵蓋
+  // 供應商名稱、發票/訂單/序號、OCR 擷取欄位的值、原始檔名,不是只篩選 documents 表的
+  // 幾個直欄。
   function onSearch(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const q = new FormData(e.currentTarget).get("q");
-    if (typeof q === "string" && q.trim()) router.push(`/documents?q=${encodeURIComponent(q.trim())}`);
+    if (typeof q === "string" && q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
   }
 
   return (

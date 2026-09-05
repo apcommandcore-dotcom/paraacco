@@ -12,6 +12,7 @@ import { uploadsRoute } from "./routes/uploads";
 import { transfersRoute } from "./routes/transfers";
 import { membersRoute } from "./routes/members";
 import { activityRoute } from "./routes/activity";
+import { searchRoute } from "./routes/search";
 import { internalRoute } from "./routes/internal";
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -54,6 +55,7 @@ app.route("/api/uploads", uploadsRoute);
 app.route("/api/transfers", transfersRoute);
 app.route("/api/members", membersRoute);
 app.route("/api/activity", activityRoute);
+app.route("/api/search", searchRoute);
 
 // apps/document-worker 透過 Cloudflare Service Binding 呼叫,走共用密鑰驗證,不是 Access
 // (見 middleware/internal-auth.ts)。這個前綴不可以掛公開網域。
