@@ -1,9 +1,8 @@
 "use client";
 
-// 文件列表 + 詳情 Drawer(規格 3.2、3.3)—— Phase 3:先做「依文件」這個最基本的 view,
-// 依購買案/依資產兩種 view 之後補(見 CODE_TASK_go-live-a2-a3-phase1_20260904.md Phase 3
-// 範圍說明)。Drawer 用 client state + URL search param(?doc=)控制開關,不用 parallel
-// routes——量體還小,之後真的有需要再升級。
+// 文件列表 + 詳情 Drawer(規格 3.2、3.3)—— 三種 view(依文件/依購買案/依資產)切換,
+// 沿用同一套 Drawer 詳情互動模式。依購買案/依資產的 Drawer 目前只顯示該筆記錄自己的欄位,
+// 沒有反查關聯了哪些文件(現有 API 沒有提供這個反查端點,量體不大先不加,已知還缺)。
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -21,7 +20,55 @@ import {
   type DocumentRow,
   type ExtractedField,
   type DocumentFile,
+  type PurchaseRow,
+  type AssetRow,
 } from "@/lib/api";
+
+type ViewKind = "document" | "purchase" | "asset";
+const VIEWS: { key: ViewKind; label: string }[] = [
+  { key: "document", label: "依文件" },
+  { key: "purchase", label: "依購買案" },
+  { key: "asset", label: "依資產" },
+];
+
+function statusVariant(status: string): "default" | "warning" | "destructive" | "success" | "outline" {
+  if (status === "failed" || status === "rejected" || status === "scrap") return "destructive";
+  if (status === "review" || status === "retry" || status === "moving" || status === "pending") return "warning";
+  if (status === "archived" || status === "approved" || status === "active") return "success";
+  return "outline";
+}
+
+function DocumentsRoot() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const view = (searchParams.get("view") as ViewKind | null) ?? "document";
+  const selectedId = searchParams.get("id");
+
+  return (
+    <AppShell>
+      <h1 className="mb-4 text-xl font-semibold tracking-wide">文件</h1>
+      <div className="mb-6 flex gap-2">
+        {VIEWS.map((v) => (
+          <button
+            key={v.key}
+            onClick={() => router.push(`/documents?view=${v.key}`)}
+            className={`border px-3 py-1.5 text-sm ${
+              view === v.key ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {view === "document" && <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} />}
+      {view === "purchase" && <PurchasesView selectedId={selectedId} />}
+      {view === "asset" && <AssetsView selectedId={selectedId} />}
+    </AppShell>
+  );
+}
+
+// --- 依文件 ---
 
 interface LinkRow {
   id: number;
@@ -38,21 +85,11 @@ interface DocumentDetail {
   assetLinks: (LinkRow & { assetId: string })[];
 }
 
-function statusVariant(status: DocumentRow["status"]): "default" | "warning" | "destructive" | "success" | "outline" {
-  if (status === "failed") return "destructive";
-  if (status === "review" || status === "retry") return "warning";
-  if (status === "archived") return "success";
-  return "outline";
-}
-
-function DocumentsList() {
+function DocumentsView({ selectedId, initialQuery }: { selectedId: string | null; initialQuery: string }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const selectedId = searchParams.get("doc");
-
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
-  const [query, setQuery] = useState(searchParams.get("q") ?? "");
+  const [query, setQuery] = useState(initialQuery);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,12 +108,10 @@ function DocumentsList() {
     load();
   }, [load]);
 
-  // 從 app-shell 的全域搜尋框導過來時(?q=),就算已經在 /documents 頁面上、元件沒有重新
-  // mount,也要同步搜尋框的值——router.push 不會重置 useState 的初始值。
   useEffect(() => {
-    const q = searchParams.get("q");
-    if (q) setQuery(q);
-  }, [searchParams]);
+    if (initialQuery) setQuery(initialQuery);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialQuery]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -99,9 +134,7 @@ function DocumentsList() {
   });
 
   return (
-    <AppShell>
-      <h1 className="mb-6 text-xl font-semibold tracking-wide">文件</h1>
-
+    <>
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div className="relative w-64">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -141,7 +174,7 @@ function DocumentsList() {
               </TableHeader>
               <TableBody>
                 {filtered.map((doc) => (
-                  <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?doc=${doc.id}`)}>
+                  <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
                     <TableCell className="font-mono text-xs">{doc.id}</TableCell>
                     <TableCell>{doc.vendorNameRaw ?? "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{doc.invoiceNo ?? "—"}</TableCell>
@@ -158,7 +191,7 @@ function DocumentsList() {
         </CardContent>
       </Card>
 
-      <Drawer open={!!selectedId} onClose={() => router.push("/documents")} title={detail?.document.id ?? "載入中…"}>
+      <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=document")} title={detail?.document.id ?? "載入中…"}>
         {detail && (
           <div className="space-y-6 text-sm">
             <section>
@@ -222,14 +255,215 @@ function DocumentsList() {
           </div>
         )}
       </Drawer>
-    </AppShell>
+    </>
+  );
+}
+
+// --- 依購買案 ---
+
+function PurchasesView({ selectedId }: { selectedId: string | null }) {
+  const router = useRouter();
+  const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
+  const [detail, setDetail] = useState<{ purchase: PurchaseRow; tags: string[] } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ purchases: PurchaseRow[] }>("/api/purchases")
+      .then((d) => setPurchases(d.purchases))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    apiFetch<{ purchase: PurchaseRow; tags: string[] }>(`/api/purchases/${selectedId}`)
+      .then(setDetail)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [selectedId]);
+
+  return (
+    <>
+      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      <Card>
+        <CardContent className="p-0">
+          {purchases === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
+          {purchases?.length === 0 && <div className="p-4 text-sm text-muted-foreground">還沒有任何採購案。</div>}
+          {purchases && purchases.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>採購案</TableHead>
+                  <TableHead>供應商</TableHead>
+                  <TableHead>摘要</TableHead>
+                  <TableHead>金額</TableHead>
+                  <TableHead>狀態</TableHead>
+                  <TableHead>日期</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {purchases.map((p) => (
+                  <TableRow key={p.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=purchase&id=${p.id}`)}>
+                    <TableCell className="font-mono text-xs">{p.id}</TableCell>
+                    <TableCell>{p.vendorNameRaw}</TableCell>
+                    <TableCell className="truncate">{p.summary}</TableCell>
+                    <TableCell>{p.currency} {(p.amountCents / 100).toFixed(2)}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(p.status)}>{p.status}</Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{p.purchaseDate}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=purchase")} title={detail?.purchase.id ?? "載入中…"}>
+        {detail && (
+          <div className="space-y-4 text-sm">
+            <table className="w-full">
+              <tbody>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">供應商</td>
+                  <td className="py-1.5">{detail.purchase.vendorNameRaw}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">摘要</td>
+                  <td className="py-1.5">{detail.purchase.summary}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">金額</td>
+                  <td className="py-1.5">{detail.purchase.currency} {(detail.purchase.amountCents / 100).toFixed(2)}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">日期</td>
+                  <td className="py-1.5">{detail.purchase.purchaseDate}</td>
+                </tr>
+                <tr>
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
+                  <td className="py-1.5">
+                    <Badge variant={statusVariant(detail.purchase.status)}>{detail.purchase.status}</Badge>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            {detail.tags.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {detail.tags.map((t) => (
+                  <Badge key={t}>{t}</Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Drawer>
+    </>
+  );
+}
+
+// --- 依資產 ---
+
+function AssetsView({ selectedId }: { selectedId: string | null }) {
+  const router = useRouter();
+  const [assets, setAssets] = useState<AssetRow[] | null>(null);
+  const [detail, setDetail] = useState<{ asset: AssetRow } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ assets: AssetRow[] }>("/api/assets")
+      .then((d) => setAssets(d.assets))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      return;
+    }
+    apiFetch<{ asset: AssetRow }>(`/api/assets/${selectedId}`)
+      .then(setDetail)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [selectedId]);
+
+  return (
+    <>
+      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      <Card>
+        <CardContent className="p-0">
+          {assets === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
+          {assets?.length === 0 && <div className="p-4 text-sm text-muted-foreground">還沒有任何資產。</div>}
+          {assets && assets.length > 0 && (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>資產</TableHead>
+                  <TableHead>名稱</TableHead>
+                  <TableHead>品牌</TableHead>
+                  <TableHead>型號</TableHead>
+                  <TableHead>序號</TableHead>
+                  <TableHead>狀態</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {assets.map((a) => (
+                  <TableRow key={a.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=asset&id=${a.id}`)}>
+                    <TableCell className="font-mono text-xs">{a.id}</TableCell>
+                    <TableCell>{a.name}</TableCell>
+                    <TableCell>{a.brand ?? "—"}</TableCell>
+                    <TableCell>{a.model ?? "—"}</TableCell>
+                    <TableCell className="font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(a.status)}>{a.status}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=asset")} title={detail?.asset.id ?? "載入中…"}>
+        {detail && (
+          <table className="w-full text-sm">
+            <tbody>
+              <tr className="border-b border-border">
+                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">名稱</td>
+                <td className="py-1.5">{detail.asset.name}</td>
+              </tr>
+              <tr className="border-b border-border">
+                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">品牌</td>
+                <td className="py-1.5">{detail.asset.brand ?? "—"}</td>
+              </tr>
+              <tr className="border-b border-border">
+                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">型號</td>
+                <td className="py-1.5">{detail.asset.model ?? "—"}</td>
+              </tr>
+              <tr className="border-b border-border">
+                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">序號</td>
+                <td className="py-1.5">{detail.asset.serialNo ?? "—"}</td>
+              </tr>
+              <tr>
+                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
+                <td className="py-1.5">
+                  <Badge variant={statusVariant(detail.asset.status)}>{detail.asset.status}</Badge>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </Drawer>
+    </>
   );
 }
 
 export default function DocumentsPage() {
   return (
     <Suspense fallback={null}>
-      <DocumentsList />
+      <DocumentsRoot />
     </Suspense>
   );
 }
