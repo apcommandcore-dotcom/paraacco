@@ -19,10 +19,23 @@
 // 覆寫成 http://localhost:8787 之類的本機 wrangler dev 網址。
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { AppShell } from "@/components/app-shell";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://acco-api.parallelserver.org";
 
 type Whoami = { email: string | null; name: string | null };
+
+// 登入後的導覽入口(2026-09-06 補上,見 CODE_TASK 首頁導覽任務)——跟 AppShell 頂部導覽列
+// 用同一份清單,避免兩邊之後改一邊漏改一邊。
+const NAV_LINKS = [
+  { href: "/inbox", label: "收件匣" },
+  { href: "/review", label: "待覆核" },
+  { href: "/documents", label: "文件列表" },
+  { href: "/dashboard", label: "總覽" },
+  { href: "/reports", label: "報表" },
+  { href: "/admin", label: "管理後台" },
+];
 
 export default function Home() {
   const [identity, setIdentity] = useState<Whoami | null>(null);
@@ -60,64 +73,41 @@ export default function Home() {
   const loggedIn = status === "ok" && !!identity?.email;
 
   return (
-    <main
-      style={{
-        minHeight: "100vh",
-        background: "#F6F6F3",
-        color: "#171717",
-        fontFamily: "'Noto Sans TC', 'Helvetica Neue', sans-serif",
-        fontSize: 15,
-        lineHeight: 1.6,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <header style={{ maxWidth: 1280, width: "100%", margin: "0 auto", padding: "48px 40px 0" }}>
-        <div
-          style={{
-            borderTop: "1px solid #171717",
-            paddingTop: 20,
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            flexWrap: "wrap",
-            gap: 16,
-          }}
-        >
-          <div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, letterSpacing: "0.18em", color: "#8A8A85" }}>
-              ATELIER PARALLEL — PARAACCO
-            </div>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#8A8A85", marginTop: 6 }}>
-              {identityText}
-            </div>
-          </div>
+    <AppShell>
+      <div style={{ border: "1px solid #171717", background: "#FFFFFF", padding: 28 }}>
+        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em" }}>會計 — paraacco</h1>
+        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#8A8A85", marginTop: 10 }}>
+          {identityText}
         </div>
-      </header>
-
-      <div style={{ maxWidth: 1280, width: "100%", margin: "0 auto", padding: "32px 40px 64px", flex: 1 }}>
-        <div style={{ border: "1px solid #171717", background: "#FFFFFF", padding: 28 }}>
-          <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em" }}>會計 — paraacco</h1>
-          <p style={{ margin: "12px 0 0", color: "#525250" }}>
-            採購 / 資產 / 文件稽核型記帳平台。畫面尚未實作(收件匣、待覆核工作台、報表等,見規格
-            文件),目前這個首頁只負責顯示登入身分,確認 Cloudflare Access 閘門(比照 paraentr)
-            接得起來。
+        <p style={{ margin: "12px 0 0", color: "#525250" }}>採購 / 資產 / 文件稽核型記帳平台。</p>
+        {!loggedIn && status === "ok" && (
+          <p style={{ margin: "16px 0 0", color: "#A97824" }}>
+            沒有偵測到登入身分——如果你是透過 *.parallelserver.org 網域開啟這個頁面卻看到這行字,
+            代表 Cloudflare Access 還沒套用到這個網域,需要檢查自訂網域是否已經掛在既有的
+            「AP Internal Platform」Access Application 底下。
           </p>
-          {!loggedIn && status === "ok" && (
-            <p style={{ margin: "16px 0 0", color: "#A97824" }}>
-              沒有偵測到登入身分——如果你是透過 *.parallelserver.org 網域開啟這個頁面卻看到這行字,
-              代表 Cloudflare Access 還沒套用到這個網域,需要檢查自訂網域是否已經掛在既有的
-              「AP Internal Platform」Access Application 底下。
-            </p>
-          )}
-          {status === "error" && (
-            <p style={{ margin: "16px 0 0", color: "#B2473E" }}>
-              呼叫 {API_BASE}/api/whoami 失敗——確認 paraacco-api 是否正常運作,或本機開發時是否
-              需要調整 NEXT_PUBLIC_API_BASE_URL。
-            </p>
-          )}
-        </div>
+        )}
+        {status === "error" && (
+          <p style={{ margin: "16px 0 0", color: "#B2473E" }}>
+            呼叫 {API_BASE}/api/whoami 失敗——確認 paraacco-api 是否正常運作,或本機開發時是否
+            需要調整 NEXT_PUBLIC_API_BASE_URL。
+          </p>
+        )}
+        {loggedIn && (
+          <div style={{ marginTop: 24, borderTop: "1px solid #E4E4E1", paddingTop: 20 }}>
+            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.12em", color: "#8A8A85", marginBottom: 10 }}>
+              前往
+            </div>
+            <nav style={{ display: "flex", flexWrap: "wrap", gap: "10px 24px" }}>
+              {NAV_LINKS.map((item) => (
+                <Link key={item.href} href={item.href} style={{ fontSize: 14, color: "#171717", textDecoration: "underline" }}>
+                  {item.label}
+                </Link>
+              ))}
+            </nav>
+          </div>
+        )}
       </div>
-    </main>
+    </AppShell>
   );
 }
