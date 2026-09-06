@@ -1,7 +1,17 @@
 // 共用的 apps/api fetch 封裝 —— 統一帶 credentials: "include"(讓 Cloudflare Access 的
 // session cookie 能跟著帶過去)跟 API_BASE。見 app/page.tsx 開頭註解:web/api 是不同子網域,
 // 一律跨網域呼叫。
-
+//
+// Content-Type 故意用 text/plain,不是 application/json(2026-09-06 修正,見
+// CODE_REPORT_post-golive-hardening_20260905.md 任務 7 的迴歸測試發現)——Cloudflare
+// Access 保護整個網域,連 CORS 的 preflight OPTIONS 請求都會被攔下來要求登入;但瀏覽器規範
+// preflight 請求本來就一定「不帶」cookie(不管實際請求是不是 credentials:"include"),
+// 所以 Access 永遠會把這個沒帶登入 cookie 的 preflight 當成未登入,直接攔截、回應裡沒有
+// Access-Control-Allow-Origin,整個請求就在 preflight 這關失敗,連 Worker 都還沒進去。
+// text/plain 是 CORS「simple request」允許的 Content-Type 之一,瀏覽器會整個跳過
+// preflight,直接送出帶 cookie 的正式請求——後端 Hono 的 c.req.json() 本來就只是把
+// body 讀成文字再 JSON.parse(),完全不管 Content-Type header 寫什麼,所以這樣改不影響
+// 後端解析。
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://acco-api.parallelserver.org";
 
 export class ApiError extends Error {
@@ -18,7 +28,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     ...init,
     credentials: "include",
     cache: "no-store",
-    headers: init?.body && !(init.body instanceof FormData) ? { "Content-Type": "application/json", ...init.headers } : init?.headers,
+    headers: init?.body && !(init.body instanceof FormData) ? { "Content-Type": "text/plain", ...init.headers } : init?.headers,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
