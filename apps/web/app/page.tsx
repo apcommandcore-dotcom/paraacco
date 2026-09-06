@@ -21,6 +21,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/app-shell";
+import { Card, CardContent } from "@/components/ui/card";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "https://acco-api.parallelserver.org";
 
@@ -74,40 +75,38 @@ export default function Home() {
 
   return (
     <AppShell>
-      <div style={{ border: "1px solid #171717", background: "#FFFFFF", padding: 28 }}>
-        <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "0.04em" }}>會計 — paraacco</h1>
-        <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#8A8A85", marginTop: 10 }}>
-          {identityText}
-        </div>
-        <p style={{ margin: "12px 0 0", color: "#525250" }}>採購 / 資產 / 文件稽核型記帳平台。</p>
-        {!loggedIn && status === "ok" && (
-          <p style={{ margin: "16px 0 0", color: "#A97824" }}>
-            沒有偵測到登入身分——如果你是透過 *.parallelserver.org 網域開啟這個頁面卻看到這行字,
-            代表 Cloudflare Access 還沒套用到這個網域,需要檢查自訂網域是否已經掛在既有的
-            「AP Internal Platform」Access Application 底下。
-          </p>
-        )}
-        {status === "error" && (
-          <p style={{ margin: "16px 0 0", color: "#B2473E" }}>
-            呼叫 {API_BASE}/api/whoami 失敗——確認 paraacco-api 是否正常運作,或本機開發時是否
-            需要調整 NEXT_PUBLIC_API_BASE_URL。
-          </p>
-        )}
-        {loggedIn && (
-          <div style={{ marginTop: 24, borderTop: "1px solid #E4E4E1", paddingTop: 20 }}>
-            <div style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11, letterSpacing: "0.12em", color: "#8A8A85", marginBottom: 10 }}>
-              前往
+      <Card>
+        <CardContent className="p-7">
+          <h1 className="m-0 text-xl font-bold tracking-wide">會計 — paraacco</h1>
+          <div className="mt-2.5 font-mono text-xs text-foreground-3">{identityText}</div>
+          <p className="mt-3 text-foreground-2">採購 / 資產 / 文件稽核型記帳平台。</p>
+          {!loggedIn && status === "ok" && (
+            <p className="mt-4 text-warning">
+              沒有偵測到登入身分——如果你是透過 *.parallelserver.org 網域開啟這個頁面卻看到這行字,
+              代表 Cloudflare Access 還沒套用到這個網域,需要檢查自訂網域是否已經掛在既有的
+              「AP Internal Platform」Access Application 底下。
+            </p>
+          )}
+          {status === "error" && (
+            <p className="mt-4 text-destructive">
+              呼叫 {API_BASE}/api/whoami 失敗——確認 paraacco-api 是否正常運作,或本機開發時是否
+              需要調整 NEXT_PUBLIC_API_BASE_URL。
+            </p>
+          )}
+          {loggedIn && (
+            <div className="mt-6 border-t border-line-2 pt-5">
+              <div className="mb-2.5 font-mono text-[11px] tracking-[0.12em] text-foreground-3">前往</div>
+              <nav className="flex flex-wrap gap-x-6 gap-y-2.5">
+                {NAV_LINKS.map((item) => (
+                  <Link key={item.href} href={item.href} className="text-sm text-foreground underline">
+                    {item.label}
+                  </Link>
+                ))}
+              </nav>
             </div>
-            <nav style={{ display: "flex", flexWrap: "wrap", gap: "10px 24px" }}>
-              {NAV_LINKS.map((item) => (
-                <Link key={item.href} href={item.href} style={{ fontSize: 14, color: "#171717", textDecoration: "underline" }}>
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
-          </div>
-        )}
-      </div>
+          )}
+        </CardContent>
+      </Card>
     </AppShell>
   );
 }

@@ -165,7 +165,7 @@ function ReviewWorkbench() {
     <AppShell>
       <h1 className="mb-6 text-xl font-semibold tracking-wide">待覆核工作台</h1>
       {error && (
-        <div className="mb-4 flex items-center gap-2 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        <div className="mb-4 flex items-center gap-2 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">
           <AlertCircle size={14} />
           {error}
         </div>

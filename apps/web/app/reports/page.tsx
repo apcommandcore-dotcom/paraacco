@@ -36,7 +36,7 @@ export default function ReportsPage() {
   return (
     <AppShell>
       <h1 className="mb-6 text-xl font-semibold tracking-wide">報表</h1>
-      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
 
       <Card>
         <CardHeader>

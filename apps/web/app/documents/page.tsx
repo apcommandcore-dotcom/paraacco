@@ -61,7 +61,9 @@ function DocumentsRoot() {
         ))}
       </div>
 
-      {view === "document" && <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} />}
+      {view === "document" && (
+        <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} initialStatus={searchParams.get("status") ?? ""} />
+      )}
       {view === "purchase" && <PurchasesView selectedId={selectedId} />}
       {view === "asset" && <AssetsView selectedId={selectedId} />}
     </AppShell>
@@ -85,10 +87,18 @@ interface DocumentDetail {
   assetLinks: (LinkRow & { assetId: string })[];
 }
 
-function DocumentsView({ selectedId, initialQuery }: { selectedId: string | null; initialQuery: string }) {
+function DocumentsView({
+  selectedId,
+  initialQuery,
+  initialStatus,
+}: {
+  selectedId: string | null;
+  initialQuery: string;
+  initialStatus: string;
+}) {
   const router = useRouter();
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [query, setQuery] = useState(initialQuery);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,7 +164,7 @@ function DocumentsView({ selectedId, initialQuery }: { selectedId: string | null
         </select>
       </div>
 
-      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
 
       <Card>
         <CardContent className="p-0">
@@ -285,7 +295,7 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
 
   return (
     <>
-      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
       <Card>
         <CardContent className="p-0">
           {purchases === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
@@ -390,7 +400,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
 
   return (
     <>
-      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
       <Card>
         <CardContent className="p-0">
           {assets === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}

@@ -105,7 +105,7 @@ function VendorsTab() {
         <CardTitle>供應商主檔</CardTitle>
       </CardHeader>
       <CardContent>
-        {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+        {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
         <div className="mb-4 flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">名稱</label>
@@ -213,7 +213,7 @@ function CategoriesTab() {
         <CardTitle>分類樹</CardTitle>
       </CardHeader>
       <CardContent>
-        {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+        {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
         <div className="mb-4 flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">名稱</label>
@@ -315,7 +315,7 @@ function TransfersTab() {
         <CardTitle>歸屬移轉申請</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <div className="m-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+        {error && <div className="m-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
         {transfers === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
         {transfers?.length === 0 && <div className="p-4 text-sm text-muted-foreground">還沒有任何移轉申請。</div>}
         {transfers && transfers.length > 0 && (
@@ -395,7 +395,7 @@ function MembersTab() {
         <CardTitle>成員(唯讀)</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        {error && <div className="m-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+        {error && <div className="m-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
         {members === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
         {members && members.length > 0 && (
           <Table>

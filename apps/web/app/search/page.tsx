@@ -44,7 +44,7 @@ function SearchResults() {
         <h1 className="text-xl font-semibold tracking-wide">搜尋:{q}</h1>
       </div>
 
-      {error && <div className="mb-4 border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
+      {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
 
       {results === null && <p className="text-sm text-muted-foreground">搜尋中…</p>}
       {results?.length === 0 && q.trim() && <p className="text-sm text-muted-foreground">沒有找到符合的文件。</p>}

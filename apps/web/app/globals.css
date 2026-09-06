@@ -2,58 +2,102 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 設計 token —— 黑白線框風格(比照 app/page.tsx 既有的 #171717/#F6F6F3 調色盤,規格文件
-   第 4 節)。深色模式用 <html data-theme="dark">,不跟隨系統 prefers-color-scheme,由使用者
-   手動切換(見 components/theme-toggle.tsx)。 */
+/* 設計 token —— 2026-09-06 換成 Theo 提供的 paraacco/VaultLink 原始設計系統(見
+   CODE_TASK_apply-design-system_20260906.md,色彩數值照抄設計稿 paraacco.dc.html /
+   VaultLink.dc.html 的 :root / [data-theme="dark"] CSS 變數,不是重新設計)。深色模式機制
+   沿用原本就有的做法:<html data-theme="dark">,不跟隨系統 prefers-color-scheme,由使用者
+   手動切換(見 components/theme-toggle.tsx),這次只換顏色數值本身,沒有改切換邏輯。
+
+   直接存完整顏色值(hex)當 CSS 變數,tailwind.config.ts 用 var(--x) 直接參照,不是舊版
+   `hsl(var(--x))` 那種要存 HSL 三元組的寫法——新增的 token 數量較多,直接抄設計稿的 hex
+   值風險比手動換算 HSL 低。 */
 :root {
-  --background: 60 9% 97%;
-  --foreground: 0 0% 9%;
-  --card: 0 0% 100%;
-  --card-foreground: 0 0% 9%;
-  --muted: 60 5% 92%;
-  --muted-foreground: 60 2% 52%;
-  --border: 0 0% 9%;
-  --input: 0 0% 82%;
-  --ring: 0 0% 9%;
-  --primary: 0 0% 9%;
-  --primary-foreground: 60 9% 97%;
-  --secondary: 60 9% 97%;
-  --secondary-foreground: 0 0% 9%;
-  --accent: 60 9% 93%;
-  --accent-foreground: 0 0% 9%;
-  --destructive: 5 45% 47%;
-  --destructive-foreground: 0 0% 100%;
-  --warning: 35 60% 43%;
-  --warning-foreground: 0 0% 100%;
+  --background: #F6F6F3;
+  --surface: #FFFFFF;
+  --surface-2: #F6F6F3;
+  --foreground: #171717;
+  --foreground-2: #525250;
+  --foreground-3: #8A8A85;
+  --line: #E7E7E5;
+  --line-2: #EFEFEC;
+  --brand: #171717;
+  --brand-hover: #000000;
+  --brand-soft: #F6F6F3;
+  --on-brand: #FFFFFF;
+  --ok: #1F6B57;
+  --ok-bg: #F2F6F4;
+  --ok-line: #C5D8D1;
+  --warn: #A97824;
+  --warn-bg: #FAF6EF;
+  --warn-line: #E3D3B3;
+  --err: #B2473E;
+  --err-bg: #FAF2F1;
+  --err-line: #E6C9C5;
+  --info: #315D7C;
+  --info-bg: #F1F4F7;
+  --info-line: #C4D2DC;
+  --per: #737373;
+  --per-bg: #F6F6F3;
+  --per-line: #D6D6D2;
+  --corp: #171717;
+  --corp-bg: #F6F6F3;
+  --corp-line: #171717;
+  --nav: #FFFFFF;
+  --nav-sub: #F6F6F3;
+  --nav-text: #525250;
 }
 
 [data-theme="dark"] {
-  --background: 0 0% 7%;
-  --foreground: 60 9% 95%;
-  --card: 0 0% 11%;
-  --card-foreground: 60 9% 95%;
-  --muted: 0 0% 16%;
-  --muted-foreground: 0 0% 62%;
-  --border: 0 0% 30%;
-  --input: 0 0% 25%;
-  --ring: 60 9% 90%;
-  --primary: 60 9% 95%;
-  --primary-foreground: 0 0% 9%;
-  --secondary: 0 0% 14%;
-  --secondary-foreground: 60 9% 95%;
-  --accent: 0 0% 16%;
-  --accent-foreground: 60 9% 95%;
-  --destructive: 5 55% 58%;
-  --destructive-foreground: 0 0% 9%;
-  --warning: 35 65% 58%;
-  --warning-foreground: 0 0% 9%;
+  --background: #121211;
+  --surface: #1A1A19;
+  --surface-2: #212120;
+  --foreground: #F4F4F0;
+  --foreground-2: #B5B5AE;
+  --foreground-3: #8B8B84;
+  --line: #33332F;
+  --line-2: #282825;
+  --brand: #F4F4F0;
+  --brand-hover: #FFFFFF;
+  --brand-soft: #26261F;
+  --on-brand: #171717;
+  --ok: #6FA895;
+  --ok-bg: #17211E;
+  --ok-line: #2E413A;
+  --warn: #C79E5B;
+  --warn-bg: #241E14;
+  --warn-line: #463A24;
+  --err: #C97C73;
+  --err-bg: #241816;
+  --err-line: #4A2C28;
+  --info: #7A9BB5;
+  --info-bg: #161E24;
+  --info-line: #2C3C48;
+  --per: #9C9C94;
+  --per-bg: #212120;
+  --per-line: #3B3B36;
+  --corp: #F4F4F0;
+  --corp-bg: #212120;
+  --corp-line: #F4F4F0;
+  --nav: #171716;
+  --nav-sub: #232321;
+  --nav-text: #B5B5AE;
 }
 
 * {
-  border-color: hsl(var(--border));
+  border-color: var(--line);
 }
 
 body {
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background: var(--background);
+  color: var(--foreground);
+}
+
+@keyframes vlin {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes vlup {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
 }

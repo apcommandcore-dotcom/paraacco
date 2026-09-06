@@ -10,7 +10,7 @@ export function Table({ className, ...props }: React.TableHTMLAttributes<HTMLTab
 }
 
 export function TableHeader({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={cn("border-b border-border", className)} {...props} />;
+  return <thead className={cn("border-b border-line", className)} {...props} />;
 }
 
 export function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTableSectionElement>) {
@@ -18,13 +18,13 @@ export function TableBody({ className, ...props }: React.HTMLAttributes<HTMLTabl
 }
 
 export function TableRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowElement>) {
-  return <tr className={cn("border-b border-border last:border-0 hover:bg-accent/50", className)} {...props} />;
+  return <tr className={cn("border-b border-line-2 last:border-0 hover:bg-accent", className)} {...props} />;
 }
 
 export function TableHead({ className, ...props }: React.ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={cn("px-3 py-2 text-left font-mono text-xs uppercase tracking-widest text-muted-foreground", className)}
+      className={cn("px-3 py-2 text-left font-mono text-xs uppercase tracking-widest text-foreground-3", className)}
       {...props}
     />
   );
