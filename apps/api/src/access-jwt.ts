@@ -15,19 +15,17 @@
 //   2. 驗證 issuer(團隊網域)、過期時間(jose 的 jwtVerify 內建處理)。
 //   3. email 一律從驗證過的 JWT payload 讀,不再相信任何 client 可控的 header。
 //
-// 已知還缺:沒有驗證 audience(aud,Access Application 的 AUD tag)——這個 tag 要在
-// Cloudflare Zero Trust dashboard(Access → Applications →「AP Internal Platform」→
-// Overview)才查得到,這次 wrangler 的 OAuth token 沒有 Access 相關的 API scope,沒辦法
-// 用程式抓。先不驗證 aud 不影響核心安全性(能通過簽章驗證代表這個 JWT 一定是 Cloudflare
-// Access 簽發的,不可能是偽造的),只是少了「這個 JWT 是不是簽給『這個』Access Application」
-// 這一層額外檢查(同一個 Cloudflare 帳號底下如果有其他 Access Application,理論上那邊簽發的
-// JWT 也會通過這裡的驗證)。等拿到 AUD tag,把 ACCESS_APP_AUD 這個常數填上、
-// jwtVerify 的 options 加回 `audience: ACCESS_APP_AUD` 即可。
+// 2026-09-06 補上 audience(aud)驗證——AUD tag 由 Theo 從 Zero Trust dashboard
+// (Access → Applications →「AP Internal Platform」→ Overview)提供。沒有這一層檢查時,
+// 同一個 Cloudflare 帳號底下任何其他 Access Application 簽發的合法 JWT 理論上都能通過
+// 這裡的驗證(因為都是同一個 team 的 JWKS 簽的、issuer 也相同)——加上 aud 比對後,只有
+// 簽給「這個」Access Application 的 JWT 才會通過。
 
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
 const TEAM_DOMAIN = "atelierparallel.cloudflareaccess.com";
 const CERTS_URL = `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`;
+const ACCESS_APP_AUD = "82d0652ecfc12a9438b2e9b2574ae72ad4a1e4ff3b137573cdd4a1289a0ace41";
 
 // createRemoteJWKSet 內建快取(預設約 30 分鐘,依 jose 版本而定),不用自己再包一層快取。
 const JWKS = createRemoteJWKSet(new URL(CERTS_URL));
@@ -48,6 +46,7 @@ export async function verifyAccessJwt(headers: Headers): Promise<VerifiedAccessI
   try {
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: `https://${TEAM_DOMAIN}`,
+      audience: ACCESS_APP_AUD,
     });
     if (typeof payload.email !== "string" || !payload.email) return null;
     return { email: payload.email };
