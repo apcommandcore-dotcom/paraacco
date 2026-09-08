@@ -527,6 +527,81 @@ export const activityLog = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// 保固與訂閱 —— 2026-09-07 補完設計落差任務書任務 3。可以掛在既有資產上(entityType='asset'
+// + entityId),也可以獨立存在不掛資產(entityId 允許空,例如純軟體訂閱)。狀態(使用中／
+// 即將到期／已過期)刻意不存欄位,用 endDate + reminderDaysBefore 即時算,避免存了狀態之後
+// 過期忘記更新變成髒資料(跟 documents.status 這種「有明確事件驅動轉換」的狀態不同,保固
+// 到期是純粹的時間函數,沒有理由不算就存)。
+// ---------------------------------------------------------------------------
+export const warrantySubscriptions = sqliteTable(
+  "warranty_subscriptions",
+  {
+    id: text("id").primaryKey(), // WSU-YYYY-NNNNNN
+    entityType: text("entity_type"), // 'asset' | null(獨立存在,不掛資產)
+    entityId: text("entity_id"),
+    ownership: text("ownership").notNull(), // 'per' | 'corp' | 'advance' | 'custody',見 documents/purchases/assets 同一套列舉
+    name: text("name").notNull(),
+    type: text("type").notNull(), // 'warranty' | 'subscription'
+    vendorName: text("vendor_name"),
+    startDate: text("start_date"),
+    endDate: text("end_date").notNull(), // YYYY-MM-DD,排序/提醒依據
+    renewalCycle: text("renewal_cycle").notNull().default("one_time"), // 'one_time' | 'monthly' | 'quarterly' | 'yearly'
+    amountCents: integer("amount_cents"),
+    currency: text("currency").default("TWD"),
+    reminderDaysBefore: integer("reminder_days_before").notNull().default(30),
+    note: text("note"),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    endDateIdx: index("warranty_subscriptions_end_date_idx").on(t.endDate),
+    ownershipIdx: index("warranty_subscriptions_ownership_idx").on(t.ownership),
+    entityIdx: index("warranty_subscriptions_entity_idx").on(t.entityType, t.entityId),
+    entityTypeCheck: check(
+      "warranty_subscriptions_entity_type_check",
+      sql`${t.entityType} IS NULL OR ${t.entityType} IN ('asset')`,
+    ),
+    ownershipCheck: check("warranty_subscriptions_ownership_check", sql`${t.ownership} IN ('per', 'corp', 'advance', 'custody')`),
+    typeCheck: check("warranty_subscriptions_type_check", sql`${t.type} IN ('warranty', 'subscription')`),
+    renewalCheck: check(
+      "warranty_subscriptions_renewal_check",
+      sql`${t.renewalCycle} IN ('one_time', 'monthly', 'quarterly', 'yearly')`,
+    ),
+    amountCheck: check("warranty_subscriptions_amount_check", sql`${t.amountCents} IS NULL OR ${t.amountCents} >= 0`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 通知中心 —— 2026-09-07 補完設計落差任務書任務 5。排程通知(週提醒/月提醒)+ 事件觸發通知
+// (收件匣逾期、保固到期、疑似重複、pipeline 失敗、歸屬移轉送出/完成)共用同一張表,靠 type
+// 分類。readAt 為 null 代表未讀,標記已讀就寫入時間戳,不用額外的 boolean 欄位。
+// ---------------------------------------------------------------------------
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    type: text("type").notNull(), // 'weekly_review' | 'monthly_review' | 'inbox_stale' | 'warranty_due' | 'dup_candidate' | 'pipeline_failed' | 'transfer_submitted' | 'transfer_decided'
+    title: text("title").notNull(),
+    message: text("message").notNull(),
+    entityType: text("entity_type"), // 'document' | 'purchase' | 'asset' | 'transfer' | 'warranty_subscription' | null
+    entityId: text("entity_id"),
+    severity: text("severity").notNull().default("info"), // 'info' | 'warning' | 'critical' —— 對照 app/globals.css 的 info/warn/err 三階 tone
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    readAt: text("read_at"),
+  },
+  (t) => ({
+    unreadIdx: index("notifications_unread_idx").on(t.readAt, t.createdAt),
+    typeEntityIdx: index("notifications_type_entity_idx").on(t.type, t.entityType, t.entityId),
+    typeCheck: check(
+      "notifications_type_check",
+      sql`${t.type} IN ('weekly_review', 'monthly_review', 'inbox_stale', 'warranty_due', 'dup_candidate', 'pipeline_failed', 'transfer_submitted', 'transfer_decided')`,
+    ),
+    severityCheck: check("notifications_severity_check", sql`${t.severity} IN ('info', 'warning', 'critical')`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
 // 人類可讀 ID 流水號 —— 應用層 upsert+1(見 sequences.ts)
 // ---------------------------------------------------------------------------
 export const idSequences = sqliteTable(

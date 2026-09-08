@@ -4,18 +4,28 @@
 // 負責人)建立這筆紀錄。
 
 import { Hono } from "hono";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { createDb, nextId, purchases, purchaseTags } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
 export const purchasesRoute = new Hono<{ Bindings: Bindings }>();
 
+// ownership 篩選 —— 2026-09-07 補完設計落差任務書任務 2(範圍切換器),沿用既有的
+// ownership 欄位(per/corp/advance/custody),不是新欄位。
 purchasesRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const status = c.req.query("status");
-  const rows = status
-    ? await db.select().from(purchases).where(eq(purchases.status, status)).orderBy(desc(purchases.purchaseDate))
+  const ownership = c.req.query("ownership");
+  const conditions = [status ? eq(purchases.status, status) : undefined, ownership ? eq(purchases.ownership, ownership) : undefined].filter(
+    (v) => v !== undefined,
+  );
+  const rows = conditions.length
+    ? await db
+        .select()
+        .from(purchases)
+        .where(and(...conditions))
+        .orderBy(desc(purchases.purchaseDate))
     : await db.select().from(purchases).orderBy(desc(purchases.purchaseDate));
   return c.json({ purchases: rows });
 });

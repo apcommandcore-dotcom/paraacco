@@ -14,7 +14,12 @@ import { transfersRoute } from "./routes/transfers";
 import { membersRoute } from "./routes/members";
 import { activityRoute } from "./routes/activity";
 import { searchRoute } from "./routes/search";
+import { countsRoute } from "./routes/counts";
+import { warrantyRoute } from "./routes/warranty";
+import { notificationsRoute } from "./routes/notifications";
 import { internalRoute } from "./routes/internal";
+import { createDb } from "@paraacco/db";
+import { handleScheduled } from "./scheduled";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -58,10 +63,22 @@ app.route("/api/transfers", transfersRoute);
 app.route("/api/members", membersRoute);
 app.route("/api/activity", activityRoute);
 app.route("/api/search", searchRoute);
+app.route("/api/counts", countsRoute);
+app.route("/api/warranty", warrantyRoute);
+app.route("/api/notifications", notificationsRoute);
 
 // apps/document-worker 透過 Cloudflare Service Binding 呼叫,走共用密鑰驗證,不是 Access
 // (見 middleware/internal-auth.ts)。這個前綴不可以掛公開網域。
 app.use("/internal/*", internalAuthMiddleware());
 app.route("/internal", internalRoute);
 
-export default app;
+// 排程通知(2026-09-07 補完設計落差任務書任務 5)—— Hono 的 app.fetch 處理一般請求,
+// scheduled 是 Cloudflare Cron Trigger 額外呼叫的入口,兩者是同一個 Worker 的不同事件
+// handler,見 wrangler.toml 的 [triggers] crons 設定跟 src/scheduled.ts 的邏輯本身。
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Bindings) {
+    const db = createDb(env.DB);
+    await handleScheduled(event.cron, db);
+  },
+};

@@ -30,6 +30,7 @@ import {
   type MatchCandidateInput,
 } from "@paraacco/domain";
 import type { Bindings } from "../../bindings";
+import { createNotification } from "../../notify";
 
 export const internalDocumentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -100,7 +101,20 @@ internalDocumentsRoute.post("/:id/duplicate-check", async (c) => {
     )
     .limit(1);
 
-  return c.json({ duplicateOfDocumentId: rows[0]?.documentId ?? null });
+  const duplicateOfDocumentId = rows[0]?.documentId ?? null;
+  // 通知中心事件觸發(2026-09-07 補完設計落差任務書任務 5)——疑似重複文件。
+  if (duplicateOfDocumentId) {
+    await createNotification(db, {
+      type: "dup_candidate",
+      title: "偵測到疑似重複文件",
+      message: `文件 ${id} 跟 ${duplicateOfDocumentId} 的檔案內容雜湊值相同,可能是重複上傳。`,
+      entityType: "document",
+      entityId: id,
+      severity: "warning",
+    });
+  }
+
+  return c.json({ duplicateOfDocumentId });
 });
 
 // 階段 4(extract):寫入 OCR 擷取到的欄位(document_extracted_fields),並同步全文檢索索引。
@@ -371,6 +385,18 @@ internalDocumentsRoute.post("/:id/decide", async (c) => {
     kind: body.status === "dup" ? "dup" : body.status === "failed" ? "failed" : "review",
     text: body.note ?? `系統將文件狀態轉為 ${body.status}`,
   });
+
+  // 通知中心事件觸發(2026-09-07 補完設計落差任務書任務 5)——pipeline 處理失敗。
+  if (body.status === "failed") {
+    await createNotification(db, {
+      type: "pipeline_failed",
+      title: "文件處理失敗",
+      message: body.note ?? `文件 ${id} 的處理流程失敗,需要人工檢查。`,
+      entityType: "document",
+      entityId: id,
+      severity: "critical",
+    });
+  }
 
   return c.json({ ok: true });
 });

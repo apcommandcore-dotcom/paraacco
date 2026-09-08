@@ -11,6 +11,7 @@ import { and, eq } from "drizzle-orm";
 import { activityLog, assets, createDb, nextId, purchases, transfers } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
+import { createNotification } from "../notify";
 
 export const transfersRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -69,6 +70,18 @@ transfersRoute.post("/", async (c) => {
     actorMemberId: auth.memberId,
   });
 
+  // 通知中心事件觸發(2026-09-07 補完設計落差任務書任務 5)——歸屬移轉送出。用 transfer 本身
+  // 的 id 當 entityId,不是 targetId,避免同一個採購案/資產之後又有另一筆新的移轉申請時
+  // 被 dedupe 規則誤判成同一件事(見 notify.ts 開頭說明)。
+  await createNotification(db, {
+    type: "transfer_submitted",
+    title: "歸屬移轉申請送出",
+    message: `${auth.name ?? auth.email} 申請將${body.targetType === "purchase" ? "採購案" : "資產"} ${body.targetId} 從 ${body.fromOwnership} 移轉到 ${body.toOwnership}。`,
+    entityType: "transfer",
+    entityId: id,
+    severity: "info",
+  });
+
   return c.json({ ok: true, id }, 201);
 });
 
@@ -115,6 +128,16 @@ transfersRoute.post("/:id/decide", async (c) => {
     kind: "transfer",
     text: `${auth.name ?? auth.email} ${body.approve ? "核准" : "駁回"}歸屬移轉申請 ${id}`,
     actorMemberId: auth.memberId,
+  });
+
+  // 通知中心事件觸發(2026-09-07 補完設計落差任務書任務 5)——歸屬移轉完成(核准或駁回)。
+  await createNotification(db, {
+    type: "transfer_decided",
+    title: `歸屬移轉${body.approve ? "已核准" : "已駁回"}`,
+    message: `${auth.name ?? auth.email} ${body.approve ? "核准" : "駁回"}了移轉申請 ${id}。`,
+    entityType: "transfer",
+    entityId: id,
+    severity: "info",
   });
 
   return c.json({ ok: true });

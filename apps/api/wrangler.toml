@@ -36,3 +36,13 @@ custom_domain = true
 # INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
 #   npx wrangler secret put INTERNAL_SERVICE_TOKEN
 # 要跟 apps/document-worker 那邊設的值完全一樣。
+
+# 排程通知(2026-09-07 補完設計落差任務書任務 5)—— 三個 cron,對應 src/scheduled.ts 的
+# handleScheduled() 用字串完全比對這三個表達式,改這裡要記得同步改那邊。全部是 UTC 時間,
+# 換算成 Asia/Taipei(UTC+8)寫在各自註解裡。
+[triggers]
+crons = [
+  "0 1 * * 5",  # 每週五 09:00 Taipei —— 小覆核提醒
+  "0 1 1 * *",  # 每月 1 號 09:00 Taipei —— 總覆核提醒(算上個月)
+  "0 0 * * *",  # 每天 08:00 Taipei —— 收件匣逾期 + 保固到期掃描
+]

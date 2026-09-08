@@ -26,11 +26,21 @@ import { canWrite } from "../middleware/auth";
 
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
+// ownership 篩選 —— 2026-09-07 補完設計落差任務書任務 2(範圍切換器),沿用既有的
+// ownership 欄位(per/corp/advance/custody),不是新欄位。
 documentsRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const status = c.req.query("status");
-  const rows = status
-    ? await db.select().from(documents).where(eq(documents.status, status)).orderBy(desc(documents.createdAt))
+  const ownership = c.req.query("ownership");
+  const conditions = [status ? eq(documents.status, status) : undefined, ownership ? eq(documents.ownership, ownership) : undefined].filter(
+    (v) => v !== undefined,
+  );
+  const rows = conditions.length
+    ? await db
+        .select()
+        .from(documents)
+        .where(and(...conditions))
+        .orderBy(desc(documents.createdAt))
     : await db.select().from(documents).orderBy(desc(documents.createdAt));
 
   // 收件匣畫面要顯示 pipeline 進度(8 步驟簡化版:current_stage/stage_key)——一份文件
