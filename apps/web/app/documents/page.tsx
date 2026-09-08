@@ -281,29 +281,90 @@ function DocumentsView({
 
 // --- 依購買案 ---
 
+// 編輯用的欄位子集(2026-09-08 補完 CODE_TASK_fix-panel-and-editable_20260908.md 任務 3)
+// —— 比照採購案現有資料模型裡「詳情畫面本來就有顯示」的那組欄位,不是把 subNote/
+// accountType/payerKind/payer/categoryId/orderNo/invoiceNo 這些目前 UI 完全沒顯示過的
+// 欄位也一次全塞進編輯表單——後端 API 其實都支援改,只是這次編輯 UI 先對齊既有詳情畫面
+// 顯示的範圍,沒有顯示過的欄位之後有需要再擴充,已知範圍取捨記錄在報告裡。
+type PurchaseEditForm = {
+  ownership: OwnershipScope;
+  vendorNameRaw: string;
+  summary: string;
+  amountCents: string;
+  currency: string;
+  purchaseDate: string;
+  status: string;
+};
+
+function purchaseToForm(p: PurchaseRow): PurchaseEditForm {
+  return {
+    ownership: p.ownership as OwnershipScope,
+    vendorNameRaw: p.vendorNameRaw,
+    summary: p.summary,
+    amountCents: String(p.amountCents / 100),
+    currency: p.currency,
+    purchaseDate: p.purchaseDate,
+    status: p.status,
+  };
+}
+
 function PurchasesView({ selectedId }: { selectedId: string | null }) {
   const router = useRouter();
   const { scope } = useScope();
   const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
   const [detail, setDetail] = useState<{ purchase: PurchaseRow; tags: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<PurchaseEditForm | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  function load() {
     const path = scope ? `/api/purchases?ownership=${scope}` : "/api/purchases";
     apiFetch<{ purchases: PurchaseRow[] }>(path)
       .then((d) => setPurchases(d.purchases))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [scope]);
+  }
+
+  useEffect(load, [scope]);
 
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      setEditing(false);
       return;
     }
     apiFetch<{ purchase: PurchaseRow; tags: string[] }>(`/api/purchases/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [selectedId]);
+
+  async function saveEdit() {
+    if (!detail || !form) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/purchases/${detail.purchase.id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          ownership: form.ownership,
+          vendorNameRaw: form.vendorNameRaw,
+          summary: form.summary,
+          amountCents: Math.round(Number(form.amountCents) * 100),
+          currency: form.currency,
+          purchaseDate: form.purchaseDate,
+          status: form.status,
+        }),
+      });
+      const refreshed = await apiFetch<{ purchase: PurchaseRow; tags: string[] }>(`/api/purchases/${detail.purchase.id}`);
+      setDetail(refreshed);
+      setEditing(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <>
@@ -344,10 +405,26 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
       </Card>
 
       <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=purchase")} title={detail?.purchase.id ?? "載入中…"}>
-        {detail && (
+        {detail && !editing && (
           <div className="space-y-4 text-sm">
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setForm(purchaseToForm(detail.purchase));
+                  setEditing(true);
+                }}
+              >
+                編輯
+              </Button>
+            </div>
             <table className="w-full">
               <tbody>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">範圍</td>
+                  <td className="py-1.5">{OWNERSHIP_LABELS[detail.purchase.ownership as OwnershipScope] ?? detail.purchase.ownership}</td>
+                </tr>
                 <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">供應商</td>
                   <td className="py-1.5">{detail.purchase.vendorNameRaw}</td>
@@ -381,6 +458,61 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
             )}
           </div>
         )}
+        {detail && editing && form && (
+          <div className="space-y-3">
+            <Field label="範圍">
+              <select
+                value={form.ownership}
+                onChange={(e) => setForm((f) => f && { ...f, ownership: e.target.value as OwnershipScope })}
+                className="h-9 w-full border border-input bg-background px-2 text-sm"
+              >
+                {(Object.keys(OWNERSHIP_LABELS) as OwnershipScope[]).map((k) => (
+                  <option key={k} value={k}>
+                    {OWNERSHIP_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="供應商">
+              <Input value={form.vendorNameRaw} onChange={(e) => setForm((f) => f && { ...f, vendorNameRaw: e.target.value })} />
+            </Field>
+            <Field label="摘要">
+              <Input value={form.summary} onChange={(e) => setForm((f) => f && { ...f, summary: e.target.value })} />
+            </Field>
+            <div className="flex gap-2">
+              <Field label="金額">
+                <Input type="number" value={form.amountCents} onChange={(e) => setForm((f) => f && { ...f, amountCents: e.target.value })} />
+              </Field>
+              <Field label="幣別">
+                <Input value={form.currency} onChange={(e) => setForm((f) => f && { ...f, currency: e.target.value })} className="w-20" />
+              </Field>
+            </div>
+            <Field label="日期">
+              <Input type="date" value={form.purchaseDate} onChange={(e) => setForm((f) => f && { ...f, purchaseDate: e.target.value })} />
+            </Field>
+            <Field label="狀態">
+              <select
+                value={form.status}
+                onChange={(e) => setForm((f) => f && { ...f, status: e.target.value })}
+                className="h-9 w-full border border-input bg-background px-2 text-sm"
+              >
+                {["draft", "review", "archived", "failed", "retry", "dup"].map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)} disabled={saving}>
+                取消
+              </Button>
+              <Button size="sm" onClick={saveEdit} disabled={saving}>
+                儲存
+              </Button>
+            </div>
+          </div>
+        )}
       </Drawer>
     </>
   );
@@ -412,6 +544,9 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_ASSET_FORM);
   const [submitting, setSubmitting] = useState(false);
+  const [editingAsset, setEditingAsset] = useState(false);
+  const [editForm, setEditForm] = useState(EMPTY_ASSET_FORM);
+  const [savingEdit, setSavingEdit] = useState(false);
 
   function load() {
     const path = scope ? `/api/assets?ownership=${scope}` : "/api/assets";
@@ -430,7 +565,42 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
     apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[] }>(`/api/assets/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+    setEditingAsset(false);
   }, [selectedId]);
+
+  function loadAssetDetail(id: string) {
+    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[] }>(`/api/assets/${id}`)
+      .then(setDetail)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }
+
+  async function saveAssetEdit() {
+    if (!detail) return;
+    setSavingEdit(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/assets/${detail.asset.id}`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          ownership: editForm.ownership,
+          categoryId: editForm.categoryId || undefined,
+          vendorName: editForm.vendorName.trim() || null,
+          acquiredDate: editForm.acquiredDate || null,
+          amountCents: editForm.amount ? Math.round(Number(editForm.amount) * 100) : null,
+          serialNo: editForm.serialNo.trim() || null,
+          note: editForm.note.trim() || null,
+        }),
+      });
+      loadAssetDetail(detail.asset.id);
+      setEditingAsset(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingEdit(false);
+    }
+  }
 
   async function addAsset() {
     if (!form.name.trim()) return;
@@ -566,8 +736,30 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
       </Card>
 
       <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=asset")} title={detail?.asset.id ?? "載入中…"}>
-        {detail && (
+        {detail && !editingAsset && (
           <>
+            <div className="mb-3 flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setEditForm({
+                    name: detail.asset.name,
+                    ownership: detail.asset.ownership as OwnershipScope,
+                    categoryId: detail.asset.categoryId ?? "",
+                    vendorName: detail.asset.vendorName ?? "",
+                    acquiredDate: detail.asset.acquiredDate ?? "",
+                    amount: detail.asset.amountCents != null ? String(detail.asset.amountCents / 100) : "",
+                    serialNo: detail.asset.serialNo ?? "",
+                    note: detail.asset.note ?? "",
+                    linkDocumentId: "",
+                  });
+                  setEditingAsset(true);
+                }}
+              >
+                編輯
+              </Button>
+            </div>
             <table className="w-full text-sm">
               <tbody>
                 <tr className="border-b border-border">
@@ -624,6 +816,51 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
               ))}
             </div>
           </>
+        )}
+        {detail && editingAsset && (
+          <div className="space-y-3">
+            <Field label="品名">
+              <Input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
+            </Field>
+            <Field label="範圍">
+              <select
+                value={editForm.ownership}
+                onChange={(e) => setEditForm((f) => ({ ...f, ownership: e.target.value as OwnershipScope }))}
+                className="h-9 w-full border border-input bg-background px-2 text-sm"
+              >
+                {(Object.keys(OWNERSHIP_LABELS) as OwnershipScope[]).map((k) => (
+                  <option key={k} value={k}>
+                    {OWNERSHIP_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="供應商">
+              <Input value={editForm.vendorName} onChange={(e) => setEditForm((f) => ({ ...f, vendorName: e.target.value }))} />
+            </Field>
+            <div className="flex gap-2">
+              <Field label="取得日期">
+                <Input type="date" value={editForm.acquiredDate} onChange={(e) => setEditForm((f) => ({ ...f, acquiredDate: e.target.value }))} />
+              </Field>
+              <Field label="金額">
+                <Input type="number" value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
+              </Field>
+            </div>
+            <Field label="序號">
+              <Input value={editForm.serialNo} onChange={(e) => setEditForm((f) => ({ ...f, serialNo: e.target.value }))} />
+            </Field>
+            <Field label="備註">
+              <Input value={editForm.note} onChange={(e) => setEditForm((f) => ({ ...f, note: e.target.value }))} />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button size="sm" variant="outline" onClick={() => setEditingAsset(false)} disabled={savingEdit}>
+                取消
+              </Button>
+              <Button size="sm" disabled={savingEdit || !editForm.name.trim()} onClick={saveAssetEdit}>
+                儲存
+              </Button>
+            </div>
+          </div>
         )}
       </Drawer>
     </>

@@ -134,6 +134,7 @@ export interface RelationCandidate {
 
 export interface PurchaseRow {
   id: string;
+  ownership: string;
   vendorNameRaw: string;
   summary: string;
   amountCents: number;

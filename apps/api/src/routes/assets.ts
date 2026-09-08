@@ -122,6 +122,71 @@ assetsRoute.post("/", async (c) => {
   return c.json({ ok: true, id }, 201);
 });
 
+// 編輯資產(2026-09-08 補完 CODE_TASK_fix-panel-and-editable_20260908.md 任務 3)——
+// 不管這筆資產原本是文件流程產生的還是手動建立的,都能編輯,欄位比照 POST / 建立時能填的
+// 那組。權限/驗證邏輯跟其他寫入操作一致(canWrite)。
+assetsRoute.post("/:id", async (c) => {
+  const auth = c.get("auth");
+  if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
+
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    ownership?: string;
+    name?: string;
+    categoryId?: string;
+    brand?: string;
+    model?: string;
+    serialNo?: string;
+    acquiredDate?: string;
+    holderEntity?: string;
+    keeper?: string;
+    location?: string;
+    warrantyEndDate?: string;
+    vendorName?: string;
+    amountCents?: number;
+    currency?: string;
+    note?: string;
+    status?: string;
+  }>();
+
+  const db = createDb(c.env.DB);
+  const [existing] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+  if (!existing) return c.json({ error: "not_found" }, 404);
+
+  await db
+    .update(assets)
+    .set({
+      ownership: body.ownership ?? existing.ownership,
+      name: body.name ?? existing.name,
+      categoryId: body.categoryId !== undefined ? body.categoryId || null : existing.categoryId,
+      brand: body.brand !== undefined ? body.brand || null : existing.brand,
+      model: body.model !== undefined ? body.model || null : existing.model,
+      serialNo: body.serialNo !== undefined ? body.serialNo || null : existing.serialNo,
+      acquiredDate: body.acquiredDate !== undefined ? body.acquiredDate || null : existing.acquiredDate,
+      holderEntity: body.holderEntity !== undefined ? body.holderEntity || null : existing.holderEntity,
+      keeper: body.keeper !== undefined ? body.keeper || null : existing.keeper,
+      location: body.location !== undefined ? body.location || null : existing.location,
+      warrantyEndDate: body.warrantyEndDate !== undefined ? body.warrantyEndDate || null : existing.warrantyEndDate,
+      vendorName: body.vendorName !== undefined ? body.vendorName || null : existing.vendorName,
+      amountCents: body.amountCents !== undefined ? body.amountCents : existing.amountCents,
+      currency: body.currency ?? existing.currency,
+      note: body.note !== undefined ? body.note || null : existing.note,
+      status: body.status ?? existing.status,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(assets.id, id));
+
+  await db.insert(activityLog).values({
+    entityType: "asset",
+    entityId: id,
+    kind: "review",
+    text: `${auth.name ?? auth.email ?? "系統"} 編輯資產資料`,
+    actorMemberId: auth.memberId,
+  });
+
+  return c.json({ ok: true });
+});
+
 // 事後補連結一份既有文件(規格見任務書:「之後有補電子發票或收據掃描檔,可以事後補連結,
 // 不強制」)。刻意不重用 routes/documents.ts 的 POST /:id/link——那支端點是待覆核工作台
 // 「決定這份文件關聯到誰」的流程,有副作用(把其餘 pending 候選標成 superseded、文件狀態

@@ -96,6 +96,63 @@ purchasesRoute.post("/", async (c) => {
   return c.json({ ok: true, id }, 201);
 });
 
+// 編輯採購案(2026-09-08 補完 CODE_TASK_fix-panel-and-editable_20260908.md 任務 3)——
+// 欄位比照既有的資料模型(跟 POST / 建立時能填的那組一致),不管這筆是文件流程產生還是
+// 手動建立都能編輯。權限/驗證邏輯跟其他寫入操作一致(canWrite)。
+purchasesRoute.post("/:id", async (c) => {
+  const auth = c.get("auth");
+  if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
+
+  const id = c.req.param("id");
+  const body = await c.req.json<{
+    ownership?: string;
+    purchaseDate?: string;
+    vendorId?: string;
+    vendorNameRaw?: string;
+    summary?: string;
+    subNote?: string;
+    amountCents?: number;
+    currency?: string;
+    categoryId?: string;
+    accountType?: string;
+    payerKind?: string;
+    payer?: string;
+    warrantyEndDate?: string;
+    orderNo?: string;
+    invoiceNo?: string;
+    status?: string;
+  }>();
+
+  const db = createDb(c.env.DB);
+  const [existing] = await db.select().from(purchases).where(eq(purchases.id, id)).limit(1);
+  if (!existing) return c.json({ error: "not_found" }, 404);
+
+  await db
+    .update(purchases)
+    .set({
+      ownership: body.ownership ?? existing.ownership,
+      purchaseDate: body.purchaseDate ?? existing.purchaseDate,
+      vendorId: body.vendorId !== undefined ? body.vendorId || null : existing.vendorId,
+      vendorNameRaw: body.vendorNameRaw ?? existing.vendorNameRaw,
+      summary: body.summary ?? existing.summary,
+      subNote: body.subNote !== undefined ? body.subNote || null : existing.subNote,
+      amountCents: body.amountCents ?? existing.amountCents,
+      currency: body.currency ?? existing.currency,
+      categoryId: body.categoryId !== undefined ? body.categoryId || null : existing.categoryId,
+      accountType: body.accountType !== undefined ? body.accountType || null : existing.accountType,
+      payerKind: body.payerKind ?? existing.payerKind,
+      payer: body.payer !== undefined ? body.payer || null : existing.payer,
+      warrantyEndDate: body.warrantyEndDate !== undefined ? body.warrantyEndDate || null : existing.warrantyEndDate,
+      orderNo: body.orderNo !== undefined ? body.orderNo || null : existing.orderNo,
+      invoiceNo: body.invoiceNo !== undefined ? body.invoiceNo || null : existing.invoiceNo,
+      status: body.status ?? existing.status,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(purchases.id, id));
+
+  return c.json({ ok: true });
+});
+
 // 修改代墊/請款狀態 —— 覆核畫面或會計後續更新用,獨立端點避免整包 PATCH 誤改其他欄位。
 purchasesRoute.post("/:id/reimbursement-status", async (c) => {
   const auth = c.get("auth");
