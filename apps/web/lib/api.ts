@@ -144,10 +144,26 @@ export interface PurchaseRow {
 
 export interface AssetRow {
   id: string;
+  ownership: string;
   name: string;
+  categoryId: string | null;
   brand: string | null;
   model: string | null;
   serialNo: string | null;
+  acquiredDate: string | null;
+  warrantyEndDate: string | null;
+  vendorName: string | null;
+  amountCents: number | null;
+  currency: string | null;
+  note: string | null;
+  status: string;
+}
+
+export interface AssetDocumentLink {
+  documentId: string;
+  relationKind: string;
+  docTypeCode: string | null;
+  vendorNameRaw: string | null;
   status: string;
 }
 

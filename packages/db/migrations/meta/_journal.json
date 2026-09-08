@@ -15,6 +15,13 @@
       "when": 1788840636202,
       "tag": "0001_old_thaddeus_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1788862665395,
+      "tag": "0002_concerned_cannonball",
+      "breakpoints": true
     }
   ]
 }

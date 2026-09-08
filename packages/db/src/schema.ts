@@ -182,6 +182,15 @@ export const assets = sqliteTable(
     warrantyEndDate: text("warranty_end_date"),
     status: text("status").notNull().default("active"),
     purchaseId: text("purchase_id").references(() => purchases.id),
+    // 2026-09-08 補完設計落差任務書任務 2(手動新增資產)補的三個欄位——非電子發票/紙本
+    // 單據沒辦法透過現有 OCR/辨識流程變成資產記錄,需要一個不依賴 documents 就能填的手動
+    // 建立路徑。這三個欄位原本只存在 purchases 表(供應商、金額)/document_extracted_fields
+    // (備註類欄位),資產表本身沒有,補上讓手動輸入時不用強迫使用者先生一筆 purchase。
+    // 全部 nullable,不影響既有文件驅動流程產生的資產列(那些列這三欄就是 null)。
+    vendorName: text("vendor_name"),
+    amountCents: integer("amount_cents"),
+    currency: text("currency").default("TWD"),
+    note: text("note"),
     createdByMemberId: text("created_by_member_id").references(() => members.id),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -194,6 +203,7 @@ export const assets = sqliteTable(
     warrantyIdx: index("assets_warranty_idx").on(t.warrantyEndDate),
     ownershipCheck: check("assets_ownership_check", sql`${t.ownership} IN ('per', 'corp', 'advance', 'custody')`),
     statusCheck: check("assets_status_check", sql`${t.status} IN ('active', 'scrap', 'moving', 'archived')`),
+    amountCheck: check("assets_amount_check", sql`${t.amountCents} IS NULL OR ${t.amountCents} >= 0`),
   }),
 );
 

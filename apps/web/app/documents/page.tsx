@@ -10,19 +10,23 @@ import { Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Drawer } from "@/components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   apiFetch,
   DOC_STATUS_LABELS,
+  OWNERSHIP_LABELS,
   STAGE_LABELS,
   type DocumentRow,
   type ExtractedField,
   type DocumentFile,
   type PurchaseRow,
   type AssetRow,
+  type AssetDocumentLink,
+  type OwnershipScope,
 } from "@/lib/api";
 
 type ViewKind = "document" | "purchase" | "asset";
@@ -384,33 +388,144 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
 
 // --- 依資產 ---
 
+const EMPTY_ASSET_FORM = {
+  name: "",
+  ownership: "corp" as OwnershipScope,
+  categoryId: "",
+  vendorName: "",
+  acquiredDate: "",
+  amount: "",
+  serialNo: "",
+  note: "",
+  linkDocumentId: "",
+};
+
+// 手動新增資產(2026-09-08 補完設計落差任務書任務 2)—— 非電子發票/紙本單據沒辦法透過
+// 現有 OCR/辨識流程變成資產記錄,這裡開一個不依賴 documents 的建立路徑,跟文件流程產生的
+// 資產共用同一張列表(後端 GET /api/assets 不分來源,一起回傳),差別只在有沒有連結文件。
 function AssetsView({ selectedId }: { selectedId: string | null }) {
   const router = useRouter();
   const { scope } = useScope();
   const [assets, setAssets] = useState<AssetRow[] | null>(null);
-  const [detail, setDetail] = useState<{ asset: AssetRow } | null>(null);
+  const [detail, setDetail] = useState<{ asset: AssetRow; documentLinks: AssetDocumentLink[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(EMPTY_ASSET_FORM);
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
+  function load() {
     const path = scope ? `/api/assets?ownership=${scope}` : "/api/assets";
     apiFetch<{ assets: AssetRow[] }>(path)
       .then((d) => setAssets(d.assets))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [scope]);
+  }
+
+  useEffect(load, [scope]);
 
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
       return;
     }
-    apiFetch<{ asset: AssetRow }>(`/api/assets/${selectedId}`)
+    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[] }>(`/api/assets/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [selectedId]);
 
+  async function addAsset() {
+    if (!form.name.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await apiFetch("/api/assets", {
+        method: "POST",
+        body: JSON.stringify({
+          name: form.name.trim(),
+          ownership: form.ownership,
+          categoryId: form.categoryId || undefined,
+          vendorName: form.vendorName.trim() || undefined,
+          acquiredDate: form.acquiredDate || undefined,
+          amountCents: form.amount ? Math.round(Number(form.amount) * 100) : undefined,
+          serialNo: form.serialNo.trim() || undefined,
+          note: form.note.trim() || undefined,
+          linkDocumentId: form.linkDocumentId.trim() || undefined,
+        }),
+      });
+      setForm(EMPTY_ASSET_FORM);
+      setShowForm(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <>
+      <div className="mb-4 flex justify-end">
+        <Button size="sm" onClick={() => setShowForm((v) => !v)}>
+          + 新增資產
+        </Button>
+      </div>
+
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
+
+      {showForm && (
+        <Card className="mb-4">
+          <CardHeader>
+            <CardTitle>手動新增資產</CardTitle>
+            <p className="text-xs text-foreground-3">給非電子發票、紙本單據等沒辦法透過辨識流程建立的資產用——關聯文件是選填,之後補電子憑證也可以。</p>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="品名">
+                <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className="w-48" />
+              </Field>
+              <Field label="範圍">
+                <select
+                  value={form.ownership}
+                  onChange={(e) => setForm((f) => ({ ...f, ownership: e.target.value as OwnershipScope }))}
+                  className="h-9 border border-input bg-background px-2 text-sm"
+                >
+                  {(Object.keys(OWNERSHIP_LABELS) as OwnershipScope[]).map((k) => (
+                    <option key={k} value={k}>
+                      {OWNERSHIP_LABELS[k]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="供應商(選填)">
+                <Input value={form.vendorName} onChange={(e) => setForm((f) => ({ ...f, vendorName: e.target.value }))} className="w-36" />
+              </Field>
+              <Field label="取得日期(選填)">
+                <Input type="date" value={form.acquiredDate} onChange={(e) => setForm((f) => ({ ...f, acquiredDate: e.target.value }))} className="w-40" />
+              </Field>
+              <Field label="金額(選填)">
+                <Input type="number" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} className="w-28" />
+              </Field>
+              <Field label="序號(選填)">
+                <Input value={form.serialNo} onChange={(e) => setForm((f) => ({ ...f, serialNo: e.target.value }))} className="w-32" />
+              </Field>
+              <Field label="關聯文件 ID(選填)">
+                <Input
+                  value={form.linkDocumentId}
+                  onChange={(e) => setForm((f) => ({ ...f, linkDocumentId: e.target.value }))}
+                  placeholder="DOC-2026-000001"
+                  className="w-40"
+                />
+              </Field>
+              <Field label="備註(選填)">
+                <Input value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="w-48" />
+              </Field>
+              <Button size="sm" disabled={submitting || !form.name.trim()} onClick={addAsset}>
+                儲存
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {assets === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
@@ -421,9 +536,11 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                 <TableRow>
                   <TableHead>資產</TableHead>
                   <TableHead>名稱</TableHead>
+                  <TableHead>供應商</TableHead>
                   <TableHead>品牌</TableHead>
                   <TableHead>型號</TableHead>
                   <TableHead>序號</TableHead>
+                  <TableHead>範圍</TableHead>
                   <TableHead>狀態</TableHead>
                 </TableRow>
               </TableHeader>
@@ -432,9 +549,11 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                   <TableRow key={a.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=asset&id=${a.id}`)}>
                     <TableCell className="font-mono text-xs">{a.id}</TableCell>
                     <TableCell>{a.name}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{a.vendorName ?? "—"}</TableCell>
                     <TableCell>{a.brand ?? "—"}</TableCell>
                     <TableCell>{a.model ?? "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[a.ownership as OwnershipScope] ?? a.ownership}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(a.status)}>{a.status}</Badge>
                     </TableCell>
@@ -448,35 +567,75 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
 
       <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=asset")} title={detail?.asset.id ?? "載入中…"}>
         {detail && (
-          <table className="w-full text-sm">
-            <tbody>
-              <tr className="border-b border-border">
-                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">名稱</td>
-                <td className="py-1.5">{detail.asset.name}</td>
-              </tr>
-              <tr className="border-b border-border">
-                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">品牌</td>
-                <td className="py-1.5">{detail.asset.brand ?? "—"}</td>
-              </tr>
-              <tr className="border-b border-border">
-                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">型號</td>
-                <td className="py-1.5">{detail.asset.model ?? "—"}</td>
-              </tr>
-              <tr className="border-b border-border">
-                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">序號</td>
-                <td className="py-1.5">{detail.asset.serialNo ?? "—"}</td>
-              </tr>
-              <tr>
-                <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
-                <td className="py-1.5">
-                  <Badge variant={statusVariant(detail.asset.status)}>{detail.asset.status}</Badge>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <>
+            <table className="w-full text-sm">
+              <tbody>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">名稱</td>
+                  <td className="py-1.5">{detail.asset.name}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">範圍</td>
+                  <td className="py-1.5">{OWNERSHIP_LABELS[detail.asset.ownership as OwnershipScope] ?? detail.asset.ownership}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">供應商</td>
+                  <td className="py-1.5">{detail.asset.vendorName ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">品牌</td>
+                  <td className="py-1.5">{detail.asset.brand ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">型號</td>
+                  <td className="py-1.5">{detail.asset.model ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">序號</td>
+                  <td className="py-1.5">{detail.asset.serialNo ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">取得日期</td>
+                  <td className="py-1.5">{detail.asset.acquiredDate ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">金額</td>
+                  <td className="py-1.5">{detail.asset.amountCents != null ? `${detail.asset.currency ?? "TWD"} ${(detail.asset.amountCents / 100).toLocaleString()}` : "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">備註</td>
+                  <td className="py-1.5">{detail.asset.note ?? "—"}</td>
+                </tr>
+                <tr>
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
+                  <td className="py-1.5">
+                    <Badge variant={statusVariant(detail.asset.status)}>{detail.asset.status}</Badge>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-medium text-foreground-2">關聯文件</div>
+              {detail.documentLinks.length === 0 && <p className="text-xs text-muted-foreground">還沒有連結任何文件(選填,不影響這筆資產記錄)。</p>}
+              {detail.documentLinks.map((link) => (
+                <div key={link.documentId} className="border-b border-line-2 py-1.5 text-xs last:border-0">
+                  <span className="font-mono">{link.documentId}</span> · {link.vendorNameRaw ?? "—"} · {link.status}
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </Drawer>
     </>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
+      {children}
+    </div>
   );
 }
 
