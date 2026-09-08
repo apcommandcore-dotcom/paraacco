@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Noto_Sans_TC, IBM_Plex_Mono } from "next/font/google";
+import { ScopeProvider } from "@/components/scope-context";
 import "./globals.css";
 
 // 2026-09-06 補上實際載入字型檔——tailwind.config.ts 的 fontFamily 早就寫了
@@ -46,7 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body className="font-sans text-[14px] leading-relaxed" style={{ margin: 0 }}>
-        {children}
+        <ScopeProvider>{children}</ScopeProvider>
       </body>
     </html>
   );

@@ -151,6 +151,67 @@ export interface AssetRow {
   status: string;
 }
 
+// 範圍(2026-09-07 補完設計落差任務書任務 2)—— 沿用既有的 documents/purchases/assets
+// ownership 欄位,不是新欄位,見 apps/api/src/routes/*.ts 的 ownership query param。
+export type OwnershipScope = "per" | "corp" | "advance" | "custody";
+export const OWNERSHIP_LABELS: Record<OwnershipScope, string> = {
+  corp: "公司",
+  per: "個人",
+  advance: "代墊",
+  custody: "代管",
+};
+
+export interface CountsResponse {
+  inbox: number;
+  pendingReview: number;
+}
+
+export type WarrantyType = "warranty" | "subscription";
+export type RenewalCycle = "one_time" | "monthly" | "quarterly" | "yearly";
+export type WarrantyStatus = "active" | "due_soon" | "expired";
+
+export interface WarrantyItem {
+  id: string;
+  entityType: string | null;
+  entityId: string | null;
+  ownership: OwnershipScope;
+  name: string;
+  type: WarrantyType;
+  vendorName: string | null;
+  startDate: string | null;
+  endDate: string;
+  renewalCycle: RenewalCycle;
+  amountCents: number | null;
+  currency: string | null;
+  reminderDaysBefore: number;
+  note: string | null;
+  status: WarrantyStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType =
+  | "weekly_review"
+  | "monthly_review"
+  | "inbox_stale"
+  | "warranty_due"
+  | "dup_candidate"
+  | "pipeline_failed"
+  | "transfer_submitted"
+  | "transfer_decided";
+
+export interface NotificationItem {
+  id: number;
+  type: NotificationType;
+  title: string;
+  message: string;
+  entityType: string | null;
+  entityId: string | null;
+  severity: "info" | "warning" | "critical";
+  createdAt: string;
+  readAt: string | null;
+}
+
 export const STAGE_LABELS: Record<string, string> = {
   queued: "1・已排入",
   validating: "2・驗證中",

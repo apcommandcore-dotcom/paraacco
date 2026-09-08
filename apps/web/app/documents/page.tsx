@@ -8,6 +8,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { useScope } from "@/components/scope-context";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -97,22 +98,27 @@ function DocumentsView({
   initialStatus: string;
 }) {
   const router = useRouter();
+  const { scope } = useScope();
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [query, setQuery] = useState(initialQuery);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // 依側邊欄範圍切換器篩選(2026-09-07 補完設計落差任務書任務 2)。
   const load = useCallback(async () => {
     try {
-      const path = statusFilter ? `/api/documents?status=${statusFilter}` : "/api/documents";
-      const data = await apiFetch<{ documents: DocumentRow[] }>(path);
+      const params = new URLSearchParams();
+      if (statusFilter) params.set("status", statusFilter);
+      if (scope) params.set("ownership", scope);
+      const qs = params.toString();
+      const data = await apiFetch<{ documents: DocumentRow[] }>(qs ? `/api/documents?${qs}` : "/api/documents");
       setDocuments(data.documents);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [statusFilter]);
+  }, [statusFilter, scope]);
 
   useEffect(() => {
     load();
@@ -273,15 +279,17 @@ function DocumentsView({
 
 function PurchasesView({ selectedId }: { selectedId: string | null }) {
   const router = useRouter();
+  const { scope } = useScope();
   const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
   const [detail, setDetail] = useState<{ purchase: PurchaseRow; tags: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ purchases: PurchaseRow[] }>("/api/purchases")
+    const path = scope ? `/api/purchases?ownership=${scope}` : "/api/purchases";
+    apiFetch<{ purchases: PurchaseRow[] }>(path)
       .then((d) => setPurchases(d.purchases))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -378,15 +386,17 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
 
 function AssetsView({ selectedId }: { selectedId: string | null }) {
   const router = useRouter();
+  const { scope } = useScope();
   const [assets, setAssets] = useState<AssetRow[] | null>(null);
   const [detail, setDetail] = useState<{ asset: AssetRow } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ assets: AssetRow[] }>("/api/assets")
+    const path = scope ? `/api/assets?ownership=${scope}` : "/api/assets";
+    apiFetch<{ assets: AssetRow[] }>(path)
       .then((d) => setAssets(d.assets))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     if (!selectedId) {

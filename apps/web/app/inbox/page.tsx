@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UploadCloud, RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { useScope } from "@/components/scope-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +54,7 @@ function putWithProgress(url: string, file: File, contentType: string, onProgres
 }
 
 export default function InboxPage() {
+  const { scope } = useScope();
   const [ownership, setOwnership] = useState<OwnershipOption>("corp");
   const [isDragging, setIsDragging] = useState(false);
   const [tasks, setTasks] = useState<UploadTask[]>([]);
@@ -60,15 +62,19 @@ export default function InboxPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 收件匣清單依側邊欄範圍切換器篩選(2026-09-07 補完設計落差任務書任務 2)——跟上傳時
+  // 選的 ownership(這個頁面上方的公司/個人/代墊/代管按鈕)是兩件事,那個是「這份文件要標記
+  // 成什麼歸屬」,這個是「目前只看哪個範圍的既有文件」。
   const loadDocuments = useCallback(async () => {
     try {
-      const data = await apiFetch<{ documents: DocumentRow[] }>("/api/documents");
+      const path = scope ? `/api/documents?ownership=${scope}` : "/api/documents";
+      const data = await apiFetch<{ documents: DocumentRow[] }>(path);
       setDocuments(data.documents);
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => {
     loadDocuments();
