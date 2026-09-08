@@ -12,6 +12,13 @@
    `hsl(var(--x))` 那種要存 HSL 三元組的寫法——新增的 token 數量較多,直接抄設計稿的 hex
    值風險比手動換算 HSL 低。 */
 :root {
+  /* 2026-09-08 補上 color-scheme——瀏覽器原生的深色模式提示,這個專案深色模式完全靠手動切換
+     [data-theme] 屬性換 CSS 變數,從來沒有告訴瀏覽器「現在是深色語境」。懷疑通知下拉/資產
+     詳情面板在深色模式下面板本身顯示成白色/半透明的問題(任務書 CODE_TASK_fix-panel-and-
+     editable_20260908.md 任務 1)跟這個有關——沒有 color-scheme 時,瀏覽器對某些
+     position:absolute + 新建立的合成層,在只有祖先的 CSS 自訂屬性改變(不是元素自己的
+     class/style 改變)的情況下,重繪判斷會出錯,畫出舊的(色彩配置初始化時的)背景。 */
+  color-scheme: light;
   --background: #F6F6F3;
   --surface: #FFFFFF;
   --surface-2: #F6F6F3;
@@ -48,6 +55,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --background: #121211;
   --surface: #1A1A19;
   --surface-2: #212120;
