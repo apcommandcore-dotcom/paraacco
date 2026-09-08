@@ -23,6 +23,19 @@ import { handleScheduled } from "./scheduled";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+// 2026-09-08 補上(查 DOC-2026-000009 真實處理失敗時發現的缺口,見
+// CODE_TASK_fix-panel-and-editable_20260908.md 任務 2):Hono 沒有自訂 onError 時,未捕捉
+// 例外一律回傳固定文字「Internal Server Error」,真正的錯誤訊息/stack 完全遺失,
+// document_processing_jobs.error_message 只存得到這串沒有資訊量的固定文字,`wrangler tail`
+// 也看不到——這次查 DOC-2026-000009 的失敗原因卡在這裡,只知道「/internal/documents/:id/
+// fields 丟了例外」,不知道丟了什麼。補上 onError 把真正的例外用 console.error 印出來
+// (`wrangler tail` 看得到),body 也回傳更多資訊(不是只有「Internal Server Error」),
+// 之後同類問題可以直接查到根因,不用再靠事後逆向工程猜測。
+app.onError((err, c) => {
+  console.error(`[unhandled error] ${c.req.method} ${c.req.path}:`, err);
+  return c.json({ error: "internal_error", message: err.message }, 500);
+});
+
 // CORS —— apps/web 目前還沒決定部署網域(見 apps/web/app/page.tsx 開頭註解),暫時允許
 // 本機開發網址與規劃中的正式網域直接跨網域呼叫 /api/*(credentials: true,讓 Cloudflare
 // Access 的 session cookie 能跟著帶過去;/internal/* 不開 CORS,那個前綴不是給瀏覽器叫的)。

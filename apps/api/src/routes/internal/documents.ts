@@ -118,10 +118,21 @@ internalDocumentsRoute.post("/:id/duplicate-check", async (c) => {
 });
 
 // 階段 4(extract):寫入 OCR 擷取到的欄位(document_extracted_fields),並同步全文檢索索引。
+//
+// 2026-09-08 修正(見 CODE_TASK_fix-panel-and-editable_20260908.md 任務 2,查
+// DOC-2026-000009 真實處理失敗時發現):delete + insert 原本是兩個獨立的 D1 statement,
+// 不是原子操作——如果 insert 因為任何原因丟例外(這份文件實際踩到的原因沒有查到,已經
+// 排除重複 fieldKey、confidence 超出範圍、FTS5 特殊字元等幾個假設,推測有其他還沒找到的
+// 邊界情況),delete 已經先執行成功,會讓這份文件的擷取欄位整批消失、不會回復成原本
+// (可能是重試前)的內容——查證時 D1 直接確認 DOC-2026-000009 在失敗後
+// document_extracted_fields 真的是 0 筆。改用 db.batch() 把 delete+insert 包成一次
+// D1 batch(D1 batch 保證要嘛全部套用要嘛全部不套用),失敗時至少不會把舊資料清空。
+// 同時補上 body.fields 的防呆(原本 `body.fields.length` 在 fields 缺漏時會直接丟
+// TypeError,是另一個沒有防到的邊界情況)。
 internalDocumentsRoute.post("/:id/fields", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{
-    fields: Array<{
+    fields?: Array<{
       fieldKey: string;
       label: string;
       value?: string;
@@ -135,12 +146,13 @@ internalDocumentsRoute.post("/:id/fields", async (c) => {
       sortOrder?: number;
     }>;
   }>();
+  const incomingFields = body.fields ?? [];
 
   const db = createDb(c.env.DB);
-  await db.delete(documentExtractedFields).where(eq(documentExtractedFields.documentId, id));
-  if (body.fields.length) {
-    await db.insert(documentExtractedFields).values(
-      body.fields.map((f, i) => ({
+  const deleteStmt = db.delete(documentExtractedFields).where(eq(documentExtractedFields.documentId, id));
+  if (incomingFields.length) {
+    const insertStmt = db.insert(documentExtractedFields).values(
+      incomingFields.map((f, i) => ({
         documentId: id,
         fieldKey: f.fieldKey,
         label: f.label,
@@ -155,6 +167,9 @@ internalDocumentsRoute.post("/:id/fields", async (c) => {
         sortOrder: f.sortOrder ?? i,
       })),
     );
+    await db.batch([deleteStmt, insertStmt]);
+  } else {
+    await deleteStmt;
   }
 
   await syncDocumentFts(db, id);
