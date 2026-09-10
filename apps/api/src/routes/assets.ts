@@ -2,7 +2,8 @@
 
 import { Hono } from "hono";
 import { and, desc, eq } from "drizzle-orm";
-import { activityLog, assets, createDb, documentAssetLinks, documents, nextId } from "@paraacco/db";
+import { activityLog, assets, createDb, documentAssetLinks, documents, nextId, warrantySubscriptions } from "@paraacco/db";
+import { computeWarrantyStatus } from "@paraacco/domain";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
@@ -47,7 +48,21 @@ assetsRoute.get("/:id", async (c) => {
     .innerJoin(documents, eq(documents.id, documentAssetLinks.documentId))
     .where(eq(documentAssetLinks.assetId, id));
 
-  return c.json({ asset: row, documentLinks: links });
+  // 保固狀態(2026-09-10 資產欄位對齊任務書任務 2)—— 不在 assets 表另存一份,直接查掛在
+  // 這筆資產上的保固/訂閱紀錄(entityType='asset'),用跟「保固與訂閱」畫面同一個
+  // computeWarrantyStatus() 算,不重寫一套邏輯。一筆資產可能掛多筆保固/訂閱紀錄,挑「最
+  // 需要使用者注意」的一筆顯示:即將到期優先於使用中優先於已過期,同優先度取到期日較近的。
+  const warrantyRows = await db
+    .select()
+    .from(warrantySubscriptions)
+    .where(and(eq(warrantySubscriptions.entityType, "asset"), eq(warrantySubscriptions.entityId, id)));
+
+  const statusPriority: Record<string, number> = { due_soon: 0, active: 1, expired: 2 };
+  const warrantyWithStatus = warrantyRows
+    .map((w) => ({ ...w, status: computeWarrantyStatus({ endDate: w.endDate, reminderDaysBefore: w.reminderDaysBefore }) }))
+    .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || a.endDate.localeCompare(b.endDate));
+
+  return c.json({ asset: row, documentLinks: links, warranty: warrantyWithStatus[0] ?? null });
 });
 
 assetsRoute.post("/", async (c) => {
@@ -197,7 +212,11 @@ assetsRoute.post("/:id/link-document", async (c) => {
   if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
 
   const id = c.req.param("id");
-  const body = await c.req.json<{ documentId: string }>();
+  // relationKind 選填(2026-09-10 資產欄位對齊任務書任務 3)—— 預設 'supporting'(維持原本
+  // 行為,既有呼叫端不用改),說明書連結傳 'manual'(schema 本來就允許這個值,不用改
+  // CHECK constraint)。'manual' 這裡指「文件角色是說明書」,跟 linkedBy='manual'(指「這筆
+  // 關聯是人工建立的,不是系統自動比對」)是兩個不同語意的欄位,不要混淆。
+  const body = await c.req.json<{ documentId: string; relationKind?: string }>();
   const db = createDb(c.env.DB);
 
   const [asset] = await db.select({ id: assets.id }).from(assets).where(eq(assets.id, id)).limit(1);
@@ -208,7 +227,7 @@ assetsRoute.post("/:id/link-document", async (c) => {
   await db.insert(documentAssetLinks).values({
     documentId: body.documentId,
     assetId: id,
-    relationKind: "supporting",
+    relationKind: body.relationKind ?? "supporting",
     linkedBy: "manual",
     createdByMemberId: auth.memberId,
   });

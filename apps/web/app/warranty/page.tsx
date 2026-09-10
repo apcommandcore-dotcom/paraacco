@@ -3,8 +3,14 @@
 // 保固與訂閱(2026-09-07 補完設計落差任務書任務 3)—— 列表依到期日排序、即將到期用警示色,
 // 支援新增/編輯/刪除。狀態(使用中/即將到期/已過期)是後端即時算的(見
 // apps/api/src/routes/warranty.ts),這裡直接顯示,不重算。
+//
+// 2026-09-10 資產欄位對齊任務書任務 2:支援從資產詳情頁跳轉過來——
+// ?entityId=<assetId> 篩選只看該資產掛的紀錄(對應「點保固狀態導到這裡」);
+// ?newEntityType=asset&newEntityId=<assetId>&newOwnership=<scope> 預先帶入新增表單並
+// 自動展開(對應「還沒有保固紀錄時顯示 + 新增保固」)。
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus, Trash2 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
@@ -13,7 +19,14 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { apiFetch, OWNERSHIP_LABELS, type OwnershipScope, type WarrantyItem, type WarrantyStatus } from "@/lib/api";
+import {
+  apiFetch,
+  OWNERSHIP_LABELS,
+  WARRANTY_STATUS_LABELS,
+  type OwnershipScope,
+  type WarrantyItem,
+  type WarrantyStatus,
+} from "@/lib/api";
 
 function statusVariant(status: WarrantyStatus): "success" | "warning" | "destructive" {
   if (status === "expired") return "destructive";
@@ -21,26 +34,33 @@ function statusVariant(status: WarrantyStatus): "success" | "warning" | "destruc
   return "success";
 }
 
-const STATUS_LABELS: Record<WarrantyStatus, string> = { active: "使用中", due_soon: "即將到期", expired: "已過期" };
+function emptyForm(entityType: "" | "asset" = "", entityId = "", ownership: OwnershipScope = "corp") {
+  return {
+    name: "",
+    type: "warranty" as "warranty" | "subscription",
+    vendorName: "",
+    ownership,
+    endDate: "",
+    renewalCycle: "one_time" as "one_time" | "monthly" | "quarterly" | "yearly",
+    reminderDaysBefore: "30",
+    note: "",
+    entityType,
+    entityId,
+  };
+}
 
-const EMPTY_FORM = {
-  name: "",
-  type: "warranty" as "warranty" | "subscription",
-  vendorName: "",
-  ownership: "corp" as OwnershipScope,
-  endDate: "",
-  renewalCycle: "one_time" as "one_time" | "monthly" | "quarterly" | "yearly",
-  reminderDaysBefore: "30",
-  note: "",
-};
-
-export default function WarrantyPage() {
+function WarrantyRoot() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { scope } = useScope();
   const [items, setItems] = useState<WarrantyItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(emptyForm());
   const [submitting, setSubmitting] = useState(false);
   const [showForm, setShowForm] = useState(false);
+
+  const filterEntityId = searchParams.get("entityId");
+  const newEntityId = searchParams.get("newEntityId");
 
   function load() {
     const path = scope ? `/api/warranty?ownership=${scope}` : "/api/warranty";
@@ -50,6 +70,20 @@ export default function WarrantyPage() {
   }
 
   useEffect(load, [scope]);
+
+  // 從資產詳情頁「+ 新增保固」過來——帶入 entityType/entityId/ownership,自動展開表單。
+  useEffect(() => {
+    if (!newEntityId) return;
+    const newEntityType = searchParams.get("newEntityType");
+    const newOwnership = searchParams.get("newOwnership");
+    if (newEntityType === "asset") {
+      setForm(emptyForm("asset", newEntityId, (newOwnership as OwnershipScope) ?? "corp"));
+      setShowForm(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newEntityId]);
+
+  const displayItems = filterEntityId ? (items ?? []).filter((i) => i.entityId === filterEntityId) : items;
 
   async function addItem() {
     if (!form.name.trim() || !form.endDate) return;
@@ -67,10 +101,13 @@ export default function WarrantyPage() {
           renewalCycle: form.renewalCycle,
           reminderDaysBefore: Number(form.reminderDaysBefore) || 30,
           note: form.note.trim() || undefined,
+          entityType: form.entityType || undefined,
+          entityId: form.entityId || undefined,
         }),
       });
-      setForm(EMPTY_FORM);
+      setForm(emptyForm());
       setShowForm(false);
+      router.replace("/warranty");
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -98,6 +135,15 @@ export default function WarrantyPage() {
         </Button>
       </div>
       <p className="mb-5 text-sm text-foreground-2">保固到期、軟體訂閱續約提醒——可以獨立存在,不用一定要掛在某個資產上。</p>
+
+      {filterEntityId && (
+        <div className="mb-4 flex items-center justify-between border border-line-2 bg-surface-2 p-3 text-sm">
+          <span>正在檢視資產 <span className="font-mono text-xs">{filterEntityId}</span> 掛的保固/訂閱紀錄</span>
+          <button type="button" className="text-xs text-primary hover:underline" onClick={() => router.push("/warranty")}>
+            看全部
+          </button>
+        </div>
+      )}
 
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
 
@@ -170,9 +216,9 @@ export default function WarrantyPage() {
 
       <Card>
         <CardContent className="p-0">
-          {items === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
-          {items?.length === 0 && <div className="p-4 text-sm text-muted-foreground">還沒有任何保固/訂閱紀錄。</div>}
-          {items && items.length > 0 && (
+          {displayItems === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
+          {displayItems?.length === 0 && <div className="p-4 text-sm text-muted-foreground">還沒有任何保固/訂閱紀錄。</div>}
+          {displayItems && displayItems.length > 0 && (
             <Table>
               <TableHeader>
                 <TableRow>
@@ -186,7 +232,7 @@ export default function WarrantyPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {items.map((item) => (
+                {displayItems.map((item) => (
                   <TableRow key={item.id}>
                     <TableCell>{item.name}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{item.type === "warranty" ? "保固" : "訂閱"}</TableCell>
@@ -194,7 +240,7 @@ export default function WarrantyPage() {
                     <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[item.ownership]}</TableCell>
                     <TableCell className="font-mono text-xs">{item.endDate}</TableCell>
                     <TableCell>
-                      <Badge variant={statusVariant(item.status)}>{STATUS_LABELS[item.status]}</Badge>
+                      <Badge variant={statusVariant(item.status)}>{WARRANTY_STATUS_LABELS[item.status]}</Badge>
                     </TableCell>
                     <TableCell>
                       <button type="button" onClick={() => removeItem(item.id)} className="text-foreground-3 hover:text-destructive" aria-label="刪除">
@@ -218,5 +264,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="mb-1 block text-xs text-muted-foreground">{label}</label>
       {children}
     </div>
+  );
+}
+
+export default function WarrantyPage() {
+  return (
+    <Suspense fallback={null}>
+      <WarrantyRoot />
+    </Suspense>
   );
 }

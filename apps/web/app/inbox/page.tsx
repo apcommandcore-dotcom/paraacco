@@ -7,6 +7,8 @@
 // 任務 2):POST /api/uploads/presign 拿簽好的 URL → 瀏覽器直接 PUT 到 R2(用 XHR 而不是
 // fetch,才能拿到 upload progress 事件)→ sha256 用 Web Crypto 在瀏覽器端算 → POST
 // /api/documents 登記文件。失敗可以針對單一檔案重試,不用整批重來。
+// 2026-09-10 資產欄位對齊任務書任務 3:上傳邏輯本體抽到 @/lib/upload(資產詳情「新增
+// 說明書」共用同一套),這裡改成呼叫共用函式,行為不變。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { UploadCloud, RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
@@ -17,6 +19,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { apiFetch, DOC_STATUS_LABELS, STAGE_LABELS, type DocumentRow } from "@/lib/api";
+import { uploadDocument } from "@/lib/upload";
 
 type OwnershipOption = "per" | "corp" | "advance" | "custody";
 
@@ -33,24 +36,6 @@ interface UploadTask {
   status: "uploading" | "registering" | "done" | "error";
   progress: number; // 0-100,只算 R2 上傳這段(登記那次 API call 很快,不特別算進度)
   error?: string;
-}
-
-function sha256Hex(bytes: ArrayBuffer): Promise<string> {
-  return crypto.subtle.digest("SHA-256", bytes).then((digest) => [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join(""));
-}
-
-function putWithProgress(url: string, file: File, contentType: string, onProgress: (pct: number) => void): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("PUT", url);
-    if (contentType) xhr.setRequestHeader("Content-Type", contentType);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`R2 上傳失敗(HTTP ${xhr.status}）`)));
-    xhr.onerror = () => reject(new Error("R2 上傳失敗(網路錯誤,檢查是否有防火牆/VPN 擋住 R2 直連)"));
-    xhr.send(file);
-  });
 }
 
 export default function InboxPage() {
@@ -89,31 +74,9 @@ export default function InboxPage() {
       try {
         setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "uploading", progress: 0, error: undefined } : t)));
 
-        const presign = await apiFetch<{ uploadUrl: string; r2Key: string }>("/api/uploads/presign", {
-          method: "POST",
-          body: JSON.stringify({ fileName: file.name, mimeType: file.type || "application/octet-stream" }),
-        });
-
-        await putWithProgress(presign.uploadUrl, file, file.type || "application/octet-stream", (pct) =>
-          setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t))),
-        );
-
-        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "registering" } : t)));
-
-        const bytes = await file.arrayBuffer();
-        const sha256 = await sha256Hex(bytes);
-
-        await apiFetch<{ ok: true; id: string }>("/api/documents", {
-          method: "POST",
-          body: JSON.stringify({
-            ownership,
-            fileName: file.name,
-            mimeType: file.type || "application/octet-stream",
-            byteSize: bytes.byteLength,
-            r2Key: presign.r2Key,
-            sha256,
-            source: "web_upload",
-          }),
+        await uploadDocument(file, ownership, {
+          onProgress: (pct) => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, progress: pct } : t))),
+          onRegistering: () => setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "registering" } : t))),
         });
 
         setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: "done", progress: 100 } : t)));

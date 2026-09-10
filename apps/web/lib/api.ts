@@ -168,6 +168,11 @@ export interface AssetDocumentLink {
   status: string;
 }
 
+// 說明書 vs 憑證(2026-09-10 資產欄位對齊任務書任務 3)—— 沿用既有的 document_asset_links
+// relationKind 欄位(schema 本來就允許 'manual' 這個值),不是新欄位。relationKind='manual'
+// 代表「這份文件是說明書」,其餘值(primary/supporting/warranty)歸類為「憑證」。
+export const MANUAL_RELATION_KIND = "manual";
+
 // 範圍(2026-09-07 補完設計落差任務書任務 2)—— 沿用既有的 documents/purchases/assets
 // ownership 欄位,不是新欄位,見 apps/api/src/routes/*.ts 的 ownership query param。
 export type OwnershipScope = "per" | "corp" | "advance" | "custody";
@@ -186,6 +191,7 @@ export interface CountsResponse {
 export type WarrantyType = "warranty" | "subscription";
 export type RenewalCycle = "one_time" | "monthly" | "quarterly" | "yearly";
 export type WarrantyStatus = "active" | "due_soon" | "expired";
+export const WARRANTY_STATUS_LABELS: Record<WarrantyStatus, string> = { active: "使用中", due_soon: "即將到期", expired: "已過期" };
 
 export interface WarrantyItem {
   id: string;

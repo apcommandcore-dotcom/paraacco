@@ -18,8 +18,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   apiFetch,
   DOC_STATUS_LABELS,
+  MANUAL_RELATION_KIND,
   OWNERSHIP_LABELS,
   STAGE_LABELS,
+  WARRANTY_STATUS_LABELS,
   type DocumentRow,
   type ExtractedField,
   type DocumentFile,
@@ -27,7 +29,10 @@ import {
   type AssetRow,
   type AssetDocumentLink,
   type OwnershipScope,
+  type WarrantyItem,
+  type WarrantyStatus,
 } from "@/lib/api";
+import { uploadDocument } from "@/lib/upload";
 
 type ViewKind = "document" | "purchase" | "asset";
 const VIEWS: { key: ViewKind; label: string }[] = [
@@ -41,6 +46,12 @@ function statusVariant(status: string): "default" | "warning" | "destructive" | 
   if (status === "review" || status === "retry" || status === "moving" || status === "pending") return "warning";
   if (status === "archived" || status === "approved" || status === "active") return "success";
   return "outline";
+}
+
+function warrantyStatusVariant(status: WarrantyStatus): "success" | "warning" | "destructive" {
+  if (status === "expired") return "destructive";
+  if (status === "due_soon") return "warning";
+  return "success";
 }
 
 function DocumentsRoot() {
@@ -545,7 +556,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
   const router = useRouter();
   const { scope } = useScope();
   const [assets, setAssets] = useState<AssetRow[] | null>(null);
-  const [detail, setDetail] = useState<{ asset: AssetRow; documentLinks: AssetDocumentLink[] } | null>(null);
+  const [detail, setDetail] = useState<{ asset: AssetRow; documentLinks: AssetDocumentLink[]; warranty: WarrantyItem | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_ASSET_FORM);
@@ -553,6 +564,12 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
   const [editingAsset, setEditingAsset] = useState(false);
   const [editForm, setEditForm] = useState(EMPTY_ASSET_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
+  // 說明書(2026-09-10 資產欄位對齊任務書任務 3)—— 連結既有文件用的輸入框狀態,跟上傳新檔案
+  // 共用同一個「連結」步驟(linkManualDocument),差別只在文件 ID 是使用者輸入還是上傳後拿到的。
+  const [manualDocId, setManualDocId] = useState("");
+  const [linkingManual, setLinkingManual] = useState(false);
+  const [uploadingManual, setUploadingManual] = useState(false);
+  const [manualUploadProgress, setManualUploadProgress] = useState<number | null>(null);
 
   function load() {
     const path = scope ? `/api/assets?ownership=${scope}` : "/api/assets";
@@ -568,16 +585,58 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
       setDetail(null);
       return;
     }
-    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[] }>(`/api/assets/${selectedId}`)
+    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[]; warranty: WarrantyItem | null }>(`/api/assets/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
     setEditingAsset(false);
   }, [selectedId]);
 
   function loadAssetDetail(id: string) {
-    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[] }>(`/api/assets/${id}`)
+    apiFetch<{ asset: AssetRow; documentLinks: AssetDocumentLink[]; warranty: WarrantyItem | null }>(`/api/assets/${id}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }
+
+  async function linkManualDocument(documentId: string) {
+    if (!detail || !documentId.trim()) return;
+    await apiFetch(`/api/assets/${detail.asset.id}/link-document`, {
+      method: "POST",
+      body: JSON.stringify({ documentId: documentId.trim(), relationKind: MANUAL_RELATION_KIND }),
+    });
+    loadAssetDetail(detail.asset.id);
+  }
+
+  async function linkExistingManual() {
+    if (!manualDocId.trim()) return;
+    setLinkingManual(true);
+    setError(null);
+    try {
+      await linkManualDocument(manualDocId);
+      setManualDocId("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLinkingManual(false);
+    }
+  }
+
+  async function uploadManual(file: File) {
+    if (!detail) return;
+    setUploadingManual(true);
+    setManualUploadProgress(0);
+    setError(null);
+    try {
+      const uploaded = await uploadDocument(file, detail.asset.ownership, {
+        source: "web_upload",
+        onProgress: setManualUploadProgress,
+      });
+      await linkManualDocument(uploaded.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploadingManual(false);
+      setManualUploadProgress(null);
+    }
   }
 
   async function saveAssetEdit() {
@@ -824,22 +883,102 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">備註</td>
                   <td className="py-1.5">{detail.asset.note ?? "—"}</td>
                 </tr>
-                <tr>
+                <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
                   <td className="py-1.5">
                     <Badge variant={statusVariant(detail.asset.status)}>{detail.asset.status}</Badge>
                   </td>
                 </tr>
+                <tr>
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">保固狀態</td>
+                  <td className="py-1.5">
+                    {detail.warranty ? (
+                      <div className="flex items-center gap-2">
+                        <Badge variant={warrantyStatusVariant(detail.warranty.status)}>{WARRANTY_STATUS_LABELS[detail.warranty.status]}</Badge>
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline"
+                          onClick={() => router.push(`/warranty?entityId=${detail.asset.id}`)}
+                        >
+                          查看
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="text-xs text-primary hover:underline"
+                        onClick={() =>
+                          router.push(`/warranty?newEntityType=asset&newEntityId=${detail.asset.id}&newOwnership=${detail.asset.ownership}`)
+                        }
+                      >
+                        + 新增保固
+                      </button>
+                    )}
+                  </td>
+                </tr>
               </tbody>
             </table>
+
+            {/* 關聯文件依角色分兩個子清單(2026-09-10 資產欄位對齊任務書任務 3)—— 沿用既有的
+                document_asset_links.relationKind 欄位,relationKind='manual' 是說明書,其餘
+                (primary/supporting/warranty,含所有舊資料)歸類為憑證,不用回溯改舊資料。 */}
             <div className="mt-4">
-              <div className="mb-2 text-xs font-medium text-foreground-2">關聯文件</div>
-              {detail.documentLinks.length === 0 && <p className="text-xs text-muted-foreground">還沒有連結任何文件(選填,不影響這筆資產記錄)。</p>}
-              {detail.documentLinks.map((link) => (
-                <div key={link.documentId} className="border-b border-line-2 py-1.5 text-xs last:border-0">
-                  <span className="font-mono">{link.documentId}</span> · {link.vendorNameRaw ?? "—"} · {link.status}
+              <div className="mb-2 text-xs font-medium text-foreground-2">憑證</div>
+              {detail.documentLinks.filter((l) => l.relationKind !== MANUAL_RELATION_KIND).length === 0 && (
+                <p className="text-xs text-muted-foreground">還沒有連結任何憑證文件。</p>
+              )}
+              {detail.documentLinks
+                .filter((l) => l.relationKind !== MANUAL_RELATION_KIND)
+                .map((link) => (
+                  <div key={link.documentId} className="border-b border-line-2 py-1.5 text-xs last:border-0">
+                    <span className="font-mono">{link.documentId}</span> · {link.vendorNameRaw ?? "—"} · {link.status}
+                  </div>
+                ))}
+            </div>
+
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-medium text-foreground-2">說明書</div>
+              {detail.documentLinks.filter((l) => l.relationKind === MANUAL_RELATION_KIND).length === 0 && (
+                <p className="text-xs text-muted-foreground">還沒有連結任何說明書(選填)。</p>
+              )}
+              {detail.documentLinks
+                .filter((l) => l.relationKind === MANUAL_RELATION_KIND)
+                .map((link) => (
+                  <div key={link.documentId} className="border-b border-line-2 py-1.5 text-xs last:border-0">
+                    <span className="font-mono">{link.documentId}</span> · {link.vendorNameRaw ?? "—"} · {link.status}
+                  </div>
+                ))}
+
+              <div className="mt-3 space-y-2 border-t border-line-2 pt-3">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={manualDocId}
+                    onChange={(e) => setManualDocId(e.target.value)}
+                    placeholder="連結既有文件 ID,例如 DOC-2026-000001"
+                    className="h-8 flex-1 text-xs"
+                  />
+                  <Button size="sm" variant="outline" disabled={linkingManual || !manualDocId.trim()} onClick={linkExistingManual}>
+                    連結
+                  </Button>
                 </div>
-              ))}
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <label className="cursor-pointer text-primary hover:underline">
+                    上傳新的說明書檔案
+                    <input
+                      type="file"
+                      accept="application/pdf,image/*"
+                      className="hidden"
+                      disabled={uploadingManual}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) uploadManual(file);
+                      }}
+                    />
+                  </label>
+                  {uploadingManual && <span>上傳中{manualUploadProgress != null ? `(${manualUploadProgress}%)` : ""}…</span>}
+                </div>
+              </div>
             </div>
           </>
         )}
