@@ -520,11 +520,17 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
 
 // --- 依資產 ---
 
+// 欄位順序、名稱比照 2026-09-10 資產欄位對齊任務書任務 1 建議順序:
+// 名稱、範圍、供應商、品牌、型號、序號、購買日期、金額、備註——清單/檢視/編輯三處统一。
+// 「購買日期」對應的是 schema 既有的 acquiredDate 欄位(確認過 assets 表沒有另一個
+// purchaseDate 欄位,是同一個欄位的顯示文字統一,不是新欄位)。
 const EMPTY_ASSET_FORM = {
   name: "",
   ownership: "corp" as OwnershipScope,
   categoryId: "",
   vendorName: "",
+  brand: "",
+  model: "",
   acquiredDate: "",
   amount: "",
   serialNo: "",
@@ -586,6 +592,8 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
           ownership: editForm.ownership,
           categoryId: editForm.categoryId || undefined,
           vendorName: editForm.vendorName.trim() || null,
+          brand: editForm.brand.trim() || null,
+          model: editForm.model.trim() || null,
           acquiredDate: editForm.acquiredDate || null,
           amountCents: editForm.amount ? Math.round(Number(editForm.amount) * 100) : null,
           serialNo: editForm.serialNo.trim() || null,
@@ -614,6 +622,8 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
           ownership: form.ownership,
           categoryId: form.categoryId || undefined,
           vendorName: form.vendorName.trim() || undefined,
+          brand: form.brand.trim() || undefined,
+          model: form.model.trim() || undefined,
           acquiredDate: form.acquiredDate || undefined,
           amountCents: form.amount ? Math.round(Number(form.amount) * 100) : undefined,
           serialNo: form.serialNo.trim() || undefined,
@@ -668,7 +678,13 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
               <Field label="供應商(選填)">
                 <Input value={form.vendorName} onChange={(e) => setForm((f) => ({ ...f, vendorName: e.target.value }))} className="w-36" />
               </Field>
-              <Field label="取得日期(選填)">
+              <Field label="品牌(選填)">
+                <Input value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} className="w-28" />
+              </Field>
+              <Field label="型號(選填)">
+                <Input value={form.model} onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))} className="w-28" />
+              </Field>
+              <Field label="購買日期(選填)">
                 <Input type="date" value={form.acquiredDate} onChange={(e) => setForm((f) => ({ ...f, acquiredDate: e.target.value }))} className="w-40" />
               </Field>
               <Field label="金額(選填)">
@@ -706,11 +722,14 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                 <TableRow>
                   <TableHead>資產</TableHead>
                   <TableHead>名稱</TableHead>
+                  <TableHead>範圍</TableHead>
                   <TableHead>供應商</TableHead>
                   <TableHead>品牌</TableHead>
                   <TableHead>型號</TableHead>
                   <TableHead>序號</TableHead>
-                  <TableHead>範圍</TableHead>
+                  <TableHead>購買日期</TableHead>
+                  <TableHead>金額</TableHead>
+                  <TableHead>備註</TableHead>
                   <TableHead>狀態</TableHead>
                 </TableRow>
               </TableHeader>
@@ -719,11 +738,16 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                   <TableRow key={a.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=asset&id=${a.id}`)}>
                     <TableCell className="font-mono text-xs">{a.id}</TableCell>
                     <TableCell>{a.name}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[a.ownership as OwnershipScope] ?? a.ownership}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{a.vendorName ?? "—"}</TableCell>
                     <TableCell>{a.brand ?? "—"}</TableCell>
                     <TableCell>{a.model ?? "—"}</TableCell>
                     <TableCell className="font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[a.ownership as OwnershipScope] ?? a.ownership}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{a.acquiredDate ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      {a.amountCents != null ? `${a.currency ?? "TWD"} ${(a.amountCents / 100).toLocaleString()}` : "—"}
+                    </TableCell>
+                    <TableCell className="max-w-[10rem] truncate text-xs text-muted-foreground">{a.note ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(a.status)}>{a.status}</Badge>
                     </TableCell>
@@ -748,6 +772,8 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                     ownership: detail.asset.ownership as OwnershipScope,
                     categoryId: detail.asset.categoryId ?? "",
                     vendorName: detail.asset.vendorName ?? "",
+                    brand: detail.asset.brand ?? "",
+                    model: detail.asset.model ?? "",
                     acquiredDate: detail.asset.acquiredDate ?? "",
                     amount: detail.asset.amountCents != null ? String(detail.asset.amountCents / 100) : "",
                     serialNo: detail.asset.serialNo ?? "",
@@ -787,7 +813,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                   <td className="py-1.5">{detail.asset.serialNo ?? "—"}</td>
                 </tr>
                 <tr className="border-b border-border">
-                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">取得日期</td>
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">購買日期</td>
                   <td className="py-1.5">{detail.asset.acquiredDate ?? "—"}</td>
                 </tr>
                 <tr className="border-b border-border">
@@ -839,16 +865,24 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
               <Input value={editForm.vendorName} onChange={(e) => setEditForm((f) => ({ ...f, vendorName: e.target.value }))} />
             </Field>
             <div className="flex gap-2">
-              <Field label="取得日期">
+              <Field label="品牌">
+                <Input value={editForm.brand} onChange={(e) => setEditForm((f) => ({ ...f, brand: e.target.value }))} />
+              </Field>
+              <Field label="型號">
+                <Input value={editForm.model} onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))} />
+              </Field>
+            </div>
+            <Field label="序號">
+              <Input value={editForm.serialNo} onChange={(e) => setEditForm((f) => ({ ...f, serialNo: e.target.value }))} />
+            </Field>
+            <div className="flex gap-2">
+              <Field label="購買日期">
                 <Input type="date" value={editForm.acquiredDate} onChange={(e) => setEditForm((f) => ({ ...f, acquiredDate: e.target.value }))} />
               </Field>
               <Field label="金額">
                 <Input type="number" value={editForm.amount} onChange={(e) => setEditForm((f) => ({ ...f, amount: e.target.value }))} />
               </Field>
             </div>
-            <Field label="序號">
-              <Input value={editForm.serialNo} onChange={(e) => setEditForm((f) => ({ ...f, serialNo: e.target.value }))} />
-            </Field>
             <Field label="備註">
               <Input value={editForm.note} onChange={(e) => setEditForm((f) => ({ ...f, note: e.target.value }))} />
             </Field>
