@@ -24,6 +24,15 @@ import {
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
+// 每日批次進件(見架構文件第 5 節)刻意不新增 source='local-scanner-batch' 這個值——
+// documents 表被 6 張子表用外鍵參照,source 的 CHECK 約束變更需要整表 rebuild,而 Cloudflare
+// D1 目前不遵守 `PRAGMA foreign_keys=OFF`/`defer_foreign_keys`(本機用最小案例重現確認,見
+// packages/db/src/schema.ts 的 sourceCheck 註解),沒辦法安全 rebuild 這張表。批次進件改成
+// 沿用既有的 'api_import'(語意上本來就對:掃描機腳本是程式化呼叫 API,跟其他 api_import
+// 文件是同一種進件管道),用下面這個 fieldKey 額外標記來源管道,供之後篩選/除錯用,不需要
+// 新的 DB 欄位或 migration。
+const INGEST_CHANNEL_FIELD_KEY = "ingest_channel";
+
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
 // ownership 篩選 —— 2026-09-07 補完設計落差任務書任務 2(範圍切換器),沿用既有的
@@ -119,6 +128,9 @@ documentsRoute.post("/", async (c) => {
     r2Key: string;
     sha256?: string;
     source: string; // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import'
+    // 每日批次進件(掃描機/NAS 排程腳本)呼叫時帶 'local-scanner-batch',標記進件管道用,
+    // 不影響上面 source 欄位(一律填既有的 'api_import',見上方 INGEST_CHANNEL_FIELD_KEY 註解)。
+    ingestChannel?: string;
     // 人工 OCR(md 交接)接回 pipeline 用 —— 有帶的話,extractionSource 一律由伺服器端強制
     // 設成 'user_input',不採信 client 傳來的值,避免有人假造成看起來像自動 OCR 的高信心結果
     // (見 CODE_TASK_manual-ocr-pipeline-integration_20260904.md)。
@@ -151,6 +163,16 @@ documentsRoute.post("/", async (c) => {
     byteSize: body.byteSize,
     sha256: body.sha256 ?? null,
   });
+
+  if (body.ingestChannel) {
+    await db.insert(documentExtractedFields).values({
+      documentId: id,
+      fieldKey: INGEST_CHANNEL_FIELD_KEY,
+      label: "進件管道",
+      value: body.ingestChannel,
+      extractionSource: "user_input",
+    });
+  }
 
   const jobId = crypto.randomUUID();
   await db.insert(documentProcessingJobs).values({

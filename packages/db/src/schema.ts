@@ -276,9 +276,17 @@ export const documents = sqliteTable(
     // 財務文件自動分類新增)。只是顯示標籤,不會拿去重新命名/搬移 R2 實體物件——schema v2
     // 刻意讓 R2 key 脫鉤業務關聯,這裡維持不變(見 document_files.r2Key)。
     displayName: text("display_name"),
-    // 'local-scanner-batch' 是 2026-09-13 新增的每日批次進件來源(掃描機/NAS 排程匯入),
-    // 見 paraacco-code-handoff-package-20260913.md 第 5 節。
-    source: text("source").notNull(), // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import' | 'local-scanner-batch'
+    // 'local-scanner-batch'(2026-09-13 新增的每日批次進件來源,見
+    // paraacco-code-handoff-package-20260913_3.md 第 5 節)刻意不加進下面的 DB CHECK 約束
+    // (sourceCheck)——documents 被 6 張子表(document_files/document_extracted_fields/
+    // document_processing_jobs/document_purchase_links/document_asset_links/
+    // relation_candidates)用外鍵參照,changed CHECK 約束需要整表 rebuild(SQLite 沒有
+    // ALTER TABLE ADD/DROP CONSTRAINT),而 Cloudflare D1 目前不遵守
+    // `PRAGMA foreign_keys=OFF`/`defer_foreign_keys`(本機 wrangler 4.131.1 + D1 模擬環境
+    // 用最小案例(兩張表、一筆外鍵參照)重現確認,DROP TABLE 一律直接違反外鍵約束,不是資料
+    // 或遷移腳本寫法的問題)。'local-scanner-batch' 改成只在應用層驗證(見
+    // apps/api/src/routes/documents.ts 的 ALLOWED_DOCUMENT_SOURCES),不在 DB CHECK 裡列出。
+    source: text("source").notNull(), // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import' | 'local-scanner-batch'(僅應用層驗證,見上方註解)
     status: text("status").notNull().default("queued"),
     duplicateOfDocumentId: text("duplicate_of_document_id"),
     createdByMemberId: text("created_by_member_id").references(() => members.id),
@@ -299,7 +307,7 @@ export const documents = sqliteTable(
     ),
     sourceCheck: check(
       "documents_source_check",
-      sql`${t.source} IN ('web_upload', 'mobile_scan', 'email_forward', 'api_import', 'local-scanner-batch')`,
+      sql`${t.source} IN ('web_upload', 'mobile_scan', 'email_forward', 'api_import')`,
     ),
     statusCheck: check(
       "documents_status_check",
