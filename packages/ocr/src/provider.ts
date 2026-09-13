@@ -33,6 +33,13 @@ export interface OcrExtractionResult {
   model?: string;
   amountCents?: number;
   currency?: string;
+  // --- 2026-09-13 財務文件自動分類新增,供 classify 用(見 @paraacco/domain 的
+  // classifyDocument())---
+  scope?: string;
+  financeDocType?: string;
+  counterparty?: string;
+  classificationConfidence?: "high" | "medium" | "low";
+  notes?: string;
 }
 
 export interface OcrProviderInput {

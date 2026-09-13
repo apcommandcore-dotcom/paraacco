@@ -56,6 +56,8 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
   push("serialNo", "序號/IMEI", parsed.serialNo);
   push("brand", "品牌", parsed.brand);
   push("model", "型號", parsed.model);
+  push("scope", "分類範圍", parsed.scope);
+  push("notes", "備註", parsed.notes);
 
   const amountCents = parsed.amount !== undefined ? Math.round(parsed.amount * 100) : undefined;
   if (amountCents !== undefined) {
@@ -82,5 +84,10 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
     model: parsed.model,
     amountCents,
     currency: parsed.currency ?? "TWD",
+    scope: parsed.scope,
+    financeDocType: parsed.financeDocType,
+    counterparty: parsed.counterparty,
+    classificationConfidence: parsed.classificationConfidence,
+    notes: parsed.notes,
   };
 }

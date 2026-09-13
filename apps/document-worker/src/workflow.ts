@@ -83,6 +83,13 @@ interface VendorCheckResponse {
   forcedReview: boolean;
 }
 
+interface ClassifyResponse {
+  ok: true;
+  /** scope 判斷不足或金額缺漏(見 @paraacco/domain 的 classifyDocument()),不管分數/供應商
+   * 主檔比對結果如何,一律強制送人工覆核。 */
+  forceReview: boolean;
+}
+
 async function logEvent(
   env: Bindings,
   jobId: string,
@@ -208,13 +215,16 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
 
       // 階段 5(classifying):促升文件層級欄位到 documents 直欄,並計算整體信心分數
       // (@paraacco/domain 的 calculateOverallConfidence(),必要欄位加權平均,見 confidence.ts)。
-      await step.do("stage-5-classifying", async () => {
+      // 2026-09-13 財務文件自動分類新增:一併把 scope/financeDocType/counterparty/
+      // classificationConfidence/notes 傳給 /classify,由它算出 ownership、display_name、
+      // 是否強制送人工覆核(見 apps/api/src/routes/internal/documents.ts 該端點註解)。
+      const classifyResult = await step.do("stage-5-classifying", async () => {
         await logEvent(env, jobId, 5, "classifying", "started");
         await updateJob(env, jobId, { currentStage: 5, stageKey: "classifying" });
 
         const overallConfidence = calculateOverallConfidence(buildConfidenceInputs(ocrResult));
 
-        await callInternal(env, "POST", `/internal/documents/${documentId}/classify`, {
+        const result = await callInternal<ClassifyResponse>(env, "POST", `/internal/documents/${documentId}/classify`, {
           docTypeCode: ocrResult.docTypeCode,
           docDate: ocrResult.docDate,
           invoiceNo: ocrResult.invoiceNo,
@@ -226,9 +236,15 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           currency: ocrResult.currency,
           vendorNameRaw: ocrResult.vendorNameRaw,
           ocrConfidence: overallConfidence,
+          scope: ocrResult.scope,
+          financeDocType: ocrResult.financeDocType,
+          counterparty: ocrResult.counterparty,
+          classificationConfidence: ocrResult.classificationConfidence,
+          notes: ocrResult.notes,
         });
 
-        await logEvent(env, jobId, 5, "classifying", "completed", { overallConfidence });
+        await logEvent(env, jobId, 5, "classifying", "completed", { overallConfidence, forceReview: result.forceReview });
+        return result;
       });
 
       // 階段 6(matching):對既有 purchases/assets 評分,落地存候選、試著決標。
@@ -266,13 +282,16 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         return result;
       });
 
-      // 階段 8(decision):供應商未登記一律強制送人工覆核,優先於分數;否則若有決標成功的
-      // 候選就自動關聯歸檔,兩者皆非才送人工覆核(有候選讓人挑,或完全沒候選也要人工建檔)。
+      // 階段 8(decision):供應商未登記、或財務分類判斷不足(範圍待確認/CORP-PERS/金額缺漏,
+      // 見 classifyResult.forceReview)一律強制送人工覆核,優先於分數;否則若有決標成功的
+      // 候選就自動關聯歸檔,三者皆非才送人工覆核(有候選讓人挑,或完全沒候選也要人工建檔)。
       await step.do("stage-8-decision", async () => {
         await logEvent(env, jobId, 8, "decision", "started");
         await updateJob(env, jobId, { currentStage: 8, stageKey: "decision" });
 
-        if (!vendorCheck.forcedReview && matchResult.autoLink) {
+        const forcedReview = vendorCheck.forcedReview || classifyResult.forceReview;
+
+        if (!forcedReview && matchResult.autoLink) {
           await callInternal(env, "POST", `/internal/documents/${documentId}/auto-link`, {
             targetType: matchResult.autoLink.kind,
             targetId: matchResult.autoLink.id,
@@ -284,9 +303,11 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
             status: "review",
             note: vendorCheck.forcedReview
               ? "供應商未登記於主檔,強制送人工覆核"
-              : matchResult.candidates.length
-                ? "有候選物件但無法自動決標,送人工覆核挑選"
-                : "無關聯候選,需人工建立或連結",
+              : classifyResult.forceReview
+                ? "財務分類範圍待確認或金額無法辨識,強制送人工覆核"
+                : matchResult.candidates.length
+                  ? "有候選物件但無法自動決標,送人工覆核挑選"
+                  : "無關聯候選,需人工建立或連結",
           });
           await logEvent(env, jobId, 8, "decision", "completed", { outcome: "review" });
         }

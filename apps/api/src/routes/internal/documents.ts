@@ -23,6 +23,7 @@ import {
   vendors,
 } from "@paraacco/db";
 import {
+  classifyDocument,
   findRegisteredVendor,
   rankCandidates,
   requiresForcedReview,
@@ -179,6 +180,14 @@ internalDocumentsRoute.post("/:id/fields", async (c) => {
 // 階段 5(classifying):寫入文件層級的分類結果 —— 促升到 documents 直欄的識別欄位
 // (invoiceNo/orderNo/serialNo/brand/model)、金額、日期、整體信心分數(由 document-worker
 // 用 @paraacco/domain 的 calculateOverallConfidence() 算好再傳進來,這裡只負責存)。
+//
+// 2026-09-13 財務文件自動分類新增:額外接 scope/financeDocType/counterparty/
+// classificationConfidence/notes,用 @paraacco/domain 的 classifyDocument() 算出
+// ownership、entityId/projectId 建議、display_name、是否強制送人工覆核。ownership 一律
+// 用分類結果覆蓋(批次進件沒有人工在上傳當下指定範圍,見架構文件第 1 節),entityId/
+// projectId 建議不是外鍵直接寫死在 purchases(那張表要等人工在 Review 建立/連結採購案時
+// 才會真的定案),先落地成 document_extracted_fields 的兩列供 Review 畫面顯示「建議
+// entity/project」,呼應既有欄位擷取的呈現方式,不用另外新增 UI 元件類型。
 internalDocumentsRoute.post("/:id/classify", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{
@@ -193,7 +202,21 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
     currency?: string;
     vendorNameRaw?: string;
     ocrConfidence?: number;
+    scope?: string;
+    financeDocType?: string;
+    counterparty?: string;
+    classificationConfidence?: "high" | "medium" | "low";
+    notes?: string;
   }>();
+
+  const outcome = classifyDocument({
+    scope: body.scope,
+    financeDocType: body.financeDocType,
+    counterparty: body.counterparty ?? body.vendorNameRaw,
+    docDate: body.docDate,
+    amountCents: body.amountCents,
+    classificationConfidence: body.classificationConfidence,
+  });
 
   const db = createDb(c.env.DB);
   await db
@@ -210,11 +233,34 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
       currency: body.currency ?? "TWD",
       vendorNameRaw: body.vendorNameRaw ?? null,
       ocrConfidence: body.ocrConfidence ?? null,
+      ownership: outcome.ownership,
+      displayName: outcome.displayName,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(documents.id, id));
 
-  return c.json({ ok: true });
+  const suggestionFields: Array<{ fieldKey: string; label: string; value: string }> = [];
+  if (outcome.entityId) suggestionFields.push({ fieldKey: "entity_id", label: "建議法律主體", value: outcome.entityId });
+  if (outcome.projectId) suggestionFields.push({ fieldKey: "project_id", label: "建議專案", value: outcome.projectId });
+
+  for (const field of suggestionFields) {
+    await db
+      .insert(documentExtractedFields)
+      .values({
+        documentId: id,
+        fieldKey: field.fieldKey,
+        label: field.label,
+        value: field.value,
+        extractionSource: "ai_inference",
+        sourceNote: "Gemini 分類判讀(2026-09-13 財務文件自動分類)",
+      })
+      .onConflictDoUpdate({
+        target: [documentExtractedFields.documentId, documentExtractedFields.fieldKey],
+        set: { value: field.value, extractionSource: "ai_inference" },
+      });
+  }
+
+  return c.json({ ok: true, forceReview: outcome.forceReview });
 });
 
 // 階段 7(vendor_check):供應商主檔強制覆核規則(規格 2.6)—— 未登記於主檔一律強制送人工

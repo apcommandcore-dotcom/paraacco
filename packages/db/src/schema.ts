@@ -276,7 +276,9 @@ export const documents = sqliteTable(
     // 財務文件自動分類新增)。只是顯示標籤,不會拿去重新命名/搬移 R2 實體物件——schema v2
     // 刻意讓 R2 key 脫鉤業務關聯,這裡維持不變(見 document_files.r2Key)。
     displayName: text("display_name"),
-    source: text("source").notNull(), // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import'
+    // 'local-scanner-batch' 是 2026-09-13 新增的每日批次進件來源(掃描機/NAS 排程匯入),
+    // 見 paraacco-code-handoff-package-20260913.md 第 5 節。
+    source: text("source").notNull(), // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import' | 'local-scanner-batch'
     status: text("status").notNull().default("queued"),
     duplicateOfDocumentId: text("duplicate_of_document_id"),
     createdByMemberId: text("created_by_member_id").references(() => members.id),
@@ -297,7 +299,7 @@ export const documents = sqliteTable(
     ),
     sourceCheck: check(
       "documents_source_check",
-      sql`${t.source} IN ('web_upload', 'mobile_scan', 'email_forward', 'api_import')`,
+      sql`${t.source} IN ('web_upload', 'mobile_scan', 'email_forward', 'api_import', 'local-scanner-batch')`,
     ),
     statusCheck: check(
       "documents_status_check",
