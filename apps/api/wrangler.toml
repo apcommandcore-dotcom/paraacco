@@ -12,6 +12,7 @@ workers_dev = false
 binding = "DB"
 database_name = "paraacco-db"
 database_id = "78b6cf4d-22fa-40df-b0e3-988b4c2dd906"
+migrations_dir = "../../packages/db/migrations"
 
 [[r2_buckets]]
 binding = "FILES"
