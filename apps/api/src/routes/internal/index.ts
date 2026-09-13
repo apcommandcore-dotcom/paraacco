@@ -6,8 +6,10 @@ import { Hono } from "hono";
 import type { Bindings } from "../../bindings";
 import { internalDocumentsRoute } from "./documents";
 import { internalJobsRoute } from "./jobs";
+import { internalStatementLinesRoute } from "./statement-lines";
 
 export const internalRoute = new Hono<{ Bindings: Bindings }>();
 
 internalRoute.route("/documents", internalDocumentsRoute);
 internalRoute.route("/jobs", internalJobsRoute);
+internalRoute.route("/statement-lines", internalStatementLinesRoute);

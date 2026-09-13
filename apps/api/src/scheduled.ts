@@ -10,11 +10,15 @@
 //     的上月資料可以算,不用處理「月底最後一天」在 cron 標準語法裡不好表示的問題)。
 //   - 收件匣逾期 / 保固到期兩個事件觸發通知本質上是「時間條件」不是「單一離散事件」,沒辦法
 //     掛在某個 API 呼叫點上觸發,所以也用排程掃描,選在每天 00:00 UTC(08:00 Taipei)跑一次。
+//   - 對帳單勾稽重新比對(2026-09-13 財務文件自動分類新增)併在同一個每日排程——candidate
+//     purchases 可能是明細列落地之後才建立/編輯的,需要定期重跑才有機會從 suggested/
+//     unmatched 變成 matched,見 reconciliation.ts。
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { computeWarrantyStatus, daysUntilEndOfWeek } from "@paraacco/domain";
 import { documents, warrantySubscriptions, type Db } from "@paraacco/db";
 import { createNotification } from "./notify";
+import { reconcilePendingStatementLines } from "./reconciliation";
 
 const INBOX_STAGE_STATUSES = ["queued", "validating", "ocr", "extract", "classifying", "matching", "vendor_check", "retry"];
 const STALE_INBOX_DAYS = 3;
@@ -105,10 +109,15 @@ export async function runWarrantyDueSweep(db: Db, now: Date = new Date()): Promi
   }
 }
 
-/** 每天一次的掃描(收件匣逾期 + 保固到期),見檔頭說明為什麼這兩個是排程掃描不是事件觸發。 */
+/** 每天一次的掃描(收件匣逾期 + 保固到期 + 對帳單重新勾稽),見檔頭說明為什麼前兩者是排程
+ * 掃描不是事件觸發。重新勾稽併在同一個每日排程裡,不另外開一條 cron——candidate purchases
+ * 可能是明細列落地之後才建立/編輯的,需要定期重跑,跟收件匣/保固到期一樣是「時間條件」
+ * 而非單一離散事件,共用同一個排程時機沒有語意上的問題(見
+ * apps/api/src/reconciliation.ts)。 */
 export async function runDailySweep(db: Db, now: Date = new Date()): Promise<void> {
   await runStaleInboxSweep(db, now);
   await runWarrantyDueSweep(db, now);
+  await reconcilePendingStatementLines(db);
 }
 
 // Cloudflare Cron Trigger 的 event.cron 字串跟 wrangler.toml 設定的完全一致才能比對,
