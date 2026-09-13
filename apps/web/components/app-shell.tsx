@@ -23,6 +23,7 @@ const NAV = [
   { href: "/assets", label: "資產", en: "ASSETS" },
   { href: "/documents", label: "文件庫", en: "DOCUMENTS" },
   { href: "/warranty", label: "保固與訂閱", en: "COVERAGE" },
+  { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
   { href: "/dashboard", label: "總覽", en: "OVERVIEW" },
   { href: "/search", label: "搜尋", en: "SEARCH" },
   { href: "/reports", label: "報表", en: "REPORTS" },

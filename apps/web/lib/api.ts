@@ -246,6 +246,48 @@ export const STAGE_LABELS: Record<string, string> = {
   decision: "8・決定歸檔",
 };
 
+// 財務文件自動分類(2026-09-13,見 paraacco-doc-classification-architecture-20260912.md)——
+// entities/projects/statement_lines,跟既有的 ownership 維度正交(ownership 決定公司/個人,
+// entity 決定哪一個法律主體)。
+export interface EntityRow {
+  id: string;
+  name: string;
+  taxId: string | null;
+}
+
+export interface ProjectRow {
+  id: string;
+  name: string;
+  status: string;
+  budgetAmountCents: number | null;
+  currency: string | null;
+  startDate: string | null;
+  endDate: string | null;
+}
+
+export type ReconciliationStatus = "matched" | "suggested" | "unmatched";
+export const RECONCILIATION_STATUS_LABELS: Record<ReconciliationStatus, string> = {
+  matched: "已勾稽",
+  suggested: "建議勾稽・待確認",
+  unmatched: "未勾稽",
+};
+
+export interface StatementLineRow {
+  id: number;
+  entityId: string;
+  sourceDocumentId: string;
+  date: string;
+  amountCents: number;
+  description: string;
+  reconciliationStatus: ReconciliationStatus;
+  matchedPurchaseId: string | null;
+  matchConfidence: number | null;
+  matchNote: string | null;
+  createdAt: string;
+  matchedPurchaseSummary: string | null;
+  matchedPurchaseVendor: string | null;
+}
+
 export const DOC_STATUS_LABELS: Record<DocumentStatus, string> = {
   queued: "已排入",
   validating: "驗證中",
