@@ -61,6 +61,11 @@ purchasesRoute.post("/", async (c) => {
     orderNo?: string;
     invoiceNo?: string;
     tags?: string[];
+    // 2026-09-13 財務文件自動分類新增,跟 ownership 正交(見 schema.ts entities 註解)——
+    // Review 畫面可能會帶入 Gemini 建議值(document_extracted_fields 的 entity_id/
+    // project_id),也可以由人工直接選擇/留空。
+    entityId?: string;
+    projectId?: string;
   }>();
 
   const db = createDb(c.env.DB);
@@ -85,6 +90,8 @@ purchasesRoute.post("/", async (c) => {
     warrantyEndDate: body.warrantyEndDate ?? null,
     orderNo: body.orderNo ?? null,
     invoiceNo: body.invoiceNo ?? null,
+    entityId: body.entityId ?? null,
+    projectId: body.projectId ?? null,
     status: "archived",
     createdByMemberId: auth.memberId,
   });
@@ -121,6 +128,8 @@ purchasesRoute.post("/:id", async (c) => {
     orderNo?: string;
     invoiceNo?: string;
     status?: string;
+    entityId?: string;
+    projectId?: string;
   }>();
 
   const db = createDb(c.env.DB);
@@ -145,6 +154,8 @@ purchasesRoute.post("/:id", async (c) => {
       warrantyEndDate: body.warrantyEndDate !== undefined ? body.warrantyEndDate || null : existing.warrantyEndDate,
       orderNo: body.orderNo !== undefined ? body.orderNo || null : existing.orderNo,
       invoiceNo: body.invoiceNo !== undefined ? body.invoiceNo || null : existing.invoiceNo,
+      entityId: body.entityId !== undefined ? body.entityId || null : existing.entityId,
+      projectId: body.projectId !== undefined ? body.projectId || null : existing.projectId,
       status: body.status ?? existing.status,
       updatedAt: new Date().toISOString(),
     })
