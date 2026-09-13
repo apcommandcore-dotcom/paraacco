@@ -14,6 +14,10 @@ import { verifyAccessJwt } from "./access-jwt";
 const TEAM: Record<string, string> = {
   "theosyl@icloud.com": "ShaoYi",
   "wu.plhojita@gmail.com": "PeiLing",
+  // 系統/批次帳號(2026-09-14,見 access-jwt.ts 的 COMMON_NAME_ALLOWLIST)——不是真人,
+  // 放在這裡只是讓 /api/whoami 這個診斷端點顯示有意義的名字,不影響權限判斷(權限看的是
+  // middleware/auth.ts 查 members 表算出來的 scope,不是這裡)。
+  "local-scanner-batch@service.paraacco.internal": "本地掃描批次系統",
 };
 
 export async function whoamiFromHeaders(headers: Headers) {
