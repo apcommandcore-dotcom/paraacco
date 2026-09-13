@@ -105,6 +105,42 @@ export const vendorAliases = sqliteTable(
 );
 
 // ---------------------------------------------------------------------------
+// 法律主體 —— 2026-09-13 財務文件自動分類新增。跟 ownership 是正交的兩個維度:ownership
+// 決定「公司的還是個人的」,entity 決定「是哪一個法律主體的」。目前只有 2 筆,人工維護,
+// 不需要 UI 管理介面。
+// ---------------------------------------------------------------------------
+export const entities = sqliteTable("entities", {
+  id: text("id").primaryKey(), // 'ap' | 'studio'
+  name: text("name").notNull(),
+  taxId: text("tax_id"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// ---------------------------------------------------------------------------
+// 專案 —— 2026-09-13 財務文件自動分類新增,取代 purchases.subNote 的鬆散文字。
+// id 沿用既有的 AP_YYNNN 專案代碼慣例(人工指定,不經 id_sequences 流水號)。
+// ---------------------------------------------------------------------------
+export const projects = sqliteTable(
+  "projects",
+  {
+    id: text("id").primaryKey(), // AP_YYNNN
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"), // 'active' | 'completed' | 'cancelled'
+    budgetAmountCents: integer("budget_amount_cents"),
+    currency: text("currency").default("TWD"),
+    startDate: text("start_date"),
+    endDate: text("end_date"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    statusIdx: index("projects_status_idx").on(t.status),
+    statusCheck: check("projects_status_check", sql`${t.status} IN ('active', 'completed', 'cancelled')`),
+    budgetCheck: check("projects_budget_check", sql`${t.budgetAmountCents} IS NULL OR ${t.budgetAmountCents} >= 0`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
 // 採購案 —— 規格 2.3。ownership_kind 不含 'transfer'(見檔頭說明)。
 // ---------------------------------------------------------------------------
 export const purchases = sqliteTable(
@@ -115,6 +151,9 @@ export const purchases = sqliteTable(
     purchaseDate: text("purchase_date").notNull(), // YYYY-MM-DD
     vendorId: text("vendor_id").references(() => vendors.id),
     vendorNameRaw: text("vendor_name_raw").notNull(),
+    // 2026-09-13 財務文件自動分類新增,跟 ownership 正交(見上方 entities 註解)。
+    entityId: text("entity_id").references(() => entities.id),
+    projectId: text("project_id").references(() => projects.id),
     summary: text("summary").notNull(),
     subNote: text("sub_note"),
     amountCents: integer("amount_cents").notNull(),
@@ -136,6 +175,8 @@ export const purchases = sqliteTable(
     ownershipIdx: index("purchases_ownership_idx").on(t.ownership),
     statusIdx: index("purchases_status_idx").on(t.status),
     vendorIdx: index("purchases_vendor_idx").on(t.vendorId),
+    entityIdx: index("purchases_entity_idx").on(t.entityId),
+    projectIdx: index("purchases_project_idx").on(t.projectId),
     warrantyIdx: index("purchases_warranty_idx").on(t.warrantyEndDate),
     ownershipCheck: check("purchases_ownership_check", sql`${t.ownership} IN ('per', 'corp', 'advance', 'custody')`),
     payerKindCheck: check("purchases_payer_kind_check", sql`${t.payerKind} IN ('personal', 'company', 'external')`),
@@ -231,6 +272,10 @@ export const documents = sqliteTable(
     // 整體信心分數 0-100,由 @paraacco/domain 的 calculateOverallConfidence() 依必要欄位加權算出,
     // 不是 OCR provider 回傳值的直接平均。
     ocrConfidence: real("ocr_confidence"),
+    // Gemini 判讀後依 {日期}_{範圍碼}_{類型碼}_{對象}_{金額} 規則組成的顯示用標籤(2026-09-13
+    // 財務文件自動分類新增)。只是顯示標籤,不會拿去重新命名/搬移 R2 實體物件——schema v2
+    // 刻意讓 R2 key 脫鉤業務關聯,這裡維持不變(見 document_files.r2Key)。
+    displayName: text("display_name"),
     source: text("source").notNull(), // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import'
     status: text("status").notNull().default("queued"),
     duplicateOfDocumentId: text("duplicate_of_document_id"),
@@ -513,6 +558,49 @@ export const transfers = sqliteTable(
     ),
     toOwnershipCheck: check("transfers_to_ownership_check", sql`${t.toOwnership} IN ('per', 'corp', 'advance', 'custody')`),
     statusCheck: check("transfers_status_check", sql`${t.status} IN ('pending', 'approved', 'rejected', 'cancelled')`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 對帳單明細列 —— 2026-09-13 財務文件自動分類新增。對帳類文件(信用卡/銀行對帳單)走同一條
+// Gemini OCR pipeline,但輸出的是「明細列陣列」寫進這裡,而不是單筆金額(不像一般憑證文件
+// 直接對應 documents 上的欄位)。sourceDocumentId 指向該對帳單本身的 documents 列(一對多:
+// 一份對帳單 PDF 拆成多筆明細列)。matchedPurchaseId 是勾稽比對成功/建議比對到的採購案,
+// reconciliationStatus 的三態(matched/suggested/unmatched)對應架構文件第 4/5 節的三輪比對邏輯。
+// ---------------------------------------------------------------------------
+export const statementLines = sqliteTable(
+  "statement_lines",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    entityId: text("entity_id")
+      .notNull()
+      .references(() => entities.id),
+    sourceDocumentId: text("source_document_id")
+      .notNull()
+      .references(() => documents.id),
+    date: text("date").notNull(), // YYYY-MM-DD
+    amountCents: integer("amount_cents").notNull(), // 退款/折讓為負值
+    description: text("description").notNull(),
+    reconciliationStatus: text("reconciliation_status").notNull().default("unmatched"),
+    matchedPurchaseId: text("matched_purchase_id").references(() => purchases.id),
+    matchConfidence: real("match_confidence"), // 0-100,第二輪 Gemini 語意比對時填入
+    matchNote: text("match_note"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    entityIdx: index("statement_lines_entity_idx").on(t.entityId),
+    sourceDocIdx: index("statement_lines_source_doc_idx").on(t.sourceDocumentId),
+    statusIdx: index("statement_lines_status_idx").on(t.reconciliationStatus),
+    matchedPurchaseIdx: index("statement_lines_matched_purchase_idx").on(t.matchedPurchaseId),
+    statusCheck: check(
+      "statement_lines_status_check",
+      sql`${t.reconciliationStatus} IN ('matched', 'suggested', 'unmatched')`,
+    ),
+    matchConfidenceCheck: check(
+      "statement_lines_match_confidence_check",
+      sql`${t.matchConfidence} IS NULL OR (${t.matchConfidence} >= 0 AND ${t.matchConfidence} <= 100)`,
+    ),
   }),
 );
 

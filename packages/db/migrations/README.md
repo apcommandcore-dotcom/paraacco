@@ -27,7 +27,9 @@ drizzle-kit 的 sqlite-core table builder 不支援 `CREATE VIRTUAL TABLE ... US
 ```bash
 npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0001_document_fts.sql
 npx wrangler d1 execute paraacco-db --remote --file=./migrations/seed.sql
+npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0002_entities_seed.sql
 ```
 
 建議順序:`0000_*.sql`(建表)→ `migrations-manual/0001_document_fts.sql`(全文檢索表)→
-`seed.sql`(members 初始資料)。
+`seed.sql`(members 初始資料)→ `migrations-manual/0002_entities_seed.sql`(entities 初始資料,
+2026-09-13 財務文件自動分類架構新增)。
