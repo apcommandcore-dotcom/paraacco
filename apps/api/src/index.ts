@@ -18,6 +18,9 @@ import { searchRoute } from "./routes/search";
 import { countsRoute } from "./routes/counts";
 import { warrantyRoute } from "./routes/warranty";
 import { notificationsRoute } from "./routes/notifications";
+import { entitiesRoute } from "./routes/entities";
+import { projectsRoute } from "./routes/projects";
+import { statementLinesRoute } from "./routes/statement-lines";
 import { internalRoute } from "./routes/internal";
 import { batchImportRoute } from "./routes/batch-import";
 import { createDb } from "@paraacco/db";
@@ -81,6 +84,9 @@ app.route("/api/search", searchRoute);
 app.route("/api/counts", countsRoute);
 app.route("/api/warranty", warrantyRoute);
 app.route("/api/notifications", notificationsRoute);
+app.route("/api/entities", entitiesRoute);
+app.route("/api/projects", projectsRoute);
+app.route("/api/statement-lines", statementLinesRoute);
 
 // 每日批次進件(排程腳本呼叫,不是人類使用者也不是 document-worker)—— 共用密鑰驗證,
 // 見 middleware/batch-auth.ts、routes/batch-import.ts 開頭註解(含 Cloudflare Access

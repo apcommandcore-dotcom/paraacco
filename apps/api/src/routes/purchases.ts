@@ -12,14 +12,20 @@ import { canWrite } from "../middleware/auth";
 export const purchasesRoute = new Hono<{ Bindings: Bindings }>();
 
 // ownership 篩選 —— 2026-09-07 補完設計落差任務書任務 2(範圍切換器),沿用既有的
-// ownership 欄位(per/corp/advance/custody),不是新欄位。
+// ownership 欄位(per/corp/advance/custody),不是新欄位。entityId/projectId 篩選是
+// 2026-09-13 財務文件自動分類新增(架構文件第 6 節「List 畫面擴充篩選」)。
 purchasesRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const status = c.req.query("status");
   const ownership = c.req.query("ownership");
-  const conditions = [status ? eq(purchases.status, status) : undefined, ownership ? eq(purchases.ownership, ownership) : undefined].filter(
-    (v) => v !== undefined,
-  );
+  const entityId = c.req.query("entityId");
+  const projectId = c.req.query("projectId");
+  const conditions = [
+    status ? eq(purchases.status, status) : undefined,
+    ownership ? eq(purchases.ownership, ownership) : undefined,
+    entityId ? eq(purchases.entityId, entityId) : undefined,
+    projectId ? eq(purchases.projectId, projectId) : undefined,
+  ].filter((v) => v !== undefined);
   const rows = conditions.length
     ? await db
         .select()
