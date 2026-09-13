@@ -3,6 +3,7 @@ import { cors } from "hono/cors";
 import { whoamiFromHeaders } from "./whoami";
 import { authMiddleware } from "./middleware/auth";
 import { internalAuthMiddleware } from "./middleware/internal-auth";
+import { batchAuthMiddleware } from "./middleware/batch-auth";
 import type { Bindings } from "./bindings";
 import { vendorsRoute } from "./routes/vendors";
 import { categoriesRoute } from "./routes/categories";
@@ -18,6 +19,7 @@ import { countsRoute } from "./routes/counts";
 import { warrantyRoute } from "./routes/warranty";
 import { notificationsRoute } from "./routes/notifications";
 import { internalRoute } from "./routes/internal";
+import { batchImportRoute } from "./routes/batch-import";
 import { createDb } from "@paraacco/db";
 import { handleScheduled } from "./scheduled";
 
@@ -79,6 +81,12 @@ app.route("/api/search", searchRoute);
 app.route("/api/counts", countsRoute);
 app.route("/api/warranty", warrantyRoute);
 app.route("/api/notifications", notificationsRoute);
+
+// 每日批次進件(排程腳本呼叫,不是人類使用者也不是 document-worker)—— 共用密鑰驗證,
+// 見 middleware/batch-auth.ts、routes/batch-import.ts 開頭註解(含 Cloudflare Access
+// Bypass 政策的設定說明)。
+app.use("/api/batch-import/*", batchAuthMiddleware());
+app.route("/api/batch-import", batchImportRoute);
 
 // apps/document-worker 透過 Cloudflare Service Binding 呼叫,走共用密鑰驗證,不是 Access
 // (見 middleware/internal-auth.ts)。這個前綴不可以掛公開網域。

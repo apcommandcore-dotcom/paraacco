@@ -14,6 +14,13 @@
 //   npx wrangler secret put R2_ACCESS_KEY_ID
 //   npx wrangler secret put R2_SECRET_ACCESS_KEY
 //   npx wrangler secret put R2_ACCOUNT_ID   (Cloudflare 帳號 ID,不是 API Token 本身)
+//
+// LOCAL_SCANNER_TOKEN:2026-09-13 補上,給 routes/batch-import.ts 用(每日批次進件排程腳本
+// 呼叫,見該檔案開頭註解)。跟 INTERNAL_SERVICE_TOKEN 故意分開設一組獨立的密鑰,不共用——
+// 排程腳本跑在本機/NAS 環境,外洩風險跟 document-worker 的 Service Binding 不是同一個等級,
+// 分開設定可以限制外洩時的影響範圍(只能打這一條批次進件端點,不能冒充 document-worker)。
+// 設定:
+//   npx wrangler secret put LOCAL_SCANNER_TOKEN
 
 export type DocumentQueueMessage = {
   documentId: string;
@@ -29,4 +36,5 @@ export type Bindings = {
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
   R2_ACCOUNT_ID: string;
+  LOCAL_SCANNER_TOKEN: string;
 };

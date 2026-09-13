@@ -38,6 +38,13 @@ custom_domain = true
 #   npx wrangler secret put INTERNAL_SERVICE_TOKEN
 # 要跟 apps/document-worker 那邊設的值完全一樣。
 
+# LOCAL_SCANNER_TOKEN(2026-09-13,每日批次進件排程腳本用,見 src/routes/batch-import.ts)
+# 一樣用 secret 設定:
+#   npx wrangler secret put LOCAL_SCANNER_TOKEN
+# 故意跟 INTERNAL_SERVICE_TOKEN 分開設一組獨立密鑰,不共用(見 src/bindings.ts 註解)。
+# 這條路徑(/api/batch-import/*)還需要在 Cloudflare Zero Trust 加一條 Access Bypass 政策,
+# 否則排程腳本的 HTTPS 請求連 Worker 都到不了,見 src/routes/batch-import.ts 開頭完整說明。
+
 # 排程通知(2026-09-07 補完設計落差任務書任務 5)—— 三個 cron,對應 src/scheduled.ts 的
 # handleScheduled() 用字串完全比對這三個表達式,改這裡要記得同步改那邊。全部是 UTC 時間,
 # 換算成 Asia/Taipei(UTC+8)寫在各自註解裡。

@@ -23,15 +23,7 @@ import {
 } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
-
-// 每日批次進件(見架構文件第 5 節)刻意不新增 source='local-scanner-batch' 這個值——
-// documents 表被 6 張子表用外鍵參照,source 的 CHECK 約束變更需要整表 rebuild,而 Cloudflare
-// D1 目前不遵守 `PRAGMA foreign_keys=OFF`/`defer_foreign_keys`(本機用最小案例重現確認,見
-// packages/db/src/schema.ts 的 sourceCheck 註解),沒辦法安全 rebuild 這張表。批次進件改成
-// 沿用既有的 'api_import'(語意上本來就對:掃描機腳本是程式化呼叫 API,跟其他 api_import
-// 文件是同一種進件管道),用下面這個 fieldKey 額外標記來源管道,供之後篩選/除錯用,不需要
-// 新的 DB 欄位或 migration。
-const INGEST_CHANNEL_FIELD_KEY = "ingest_channel";
+import { registerDocument } from "../document-ingest";
 
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -143,70 +135,18 @@ documentsRoute.post("/", async (c) => {
   }>();
 
   const db = createDb(c.env.DB);
-  const year = new Date().getFullYear();
-  const id = await nextId(db, "DOC", year);
-
-  await db.insert(documents).values({
-    id,
+  const id = await registerDocument(db, c.env.DOCUMENT_QUEUE, {
     ownership: body.ownership,
-    source: body.source,
-    status: "queued",
-    createdByMemberId: auth.memberId,
-  });
-
-  await db.insert(documentFiles).values({
-    documentId: id,
-    kind: "original",
-    r2Key: body.r2Key,
-    originalFileName: body.fileName,
+    fileName: body.fileName,
     mimeType: body.mimeType,
     byteSize: body.byteSize,
-    sha256: body.sha256 ?? null,
-  });
-
-  if (body.ingestChannel) {
-    await db.insert(documentExtractedFields).values({
-      documentId: id,
-      fieldKey: INGEST_CHANNEL_FIELD_KEY,
-      label: "進件管道",
-      value: body.ingestChannel,
-      extractionSource: "user_input",
-    });
-  }
-
-  const jobId = crypto.randomUUID();
-  await db.insert(documentProcessingJobs).values({
-    id: jobId,
-    documentId: id,
-    currentStage: 1,
-    stageKey: "queued",
-    status: "queued",
-  });
-
-  if (body.extractedFields?.length) {
-    await db.insert(documentExtractedFields).values(
-      body.extractedFields.map((f, i) => ({
-        documentId: id,
-        fieldKey: f.fieldKey,
-        label: f.label,
-        value: f.value ?? null,
-        confidence: f.confidence ?? null,
-        extractionSource: "user_input",
-        sortOrder: i,
-      })),
-    );
-    await syncDocumentFts(db, id);
-  }
-
-  await db.insert(activityLog).values({
-    entityType: "document",
-    entityId: id,
-    kind: "import",
-    text: `新文件匯入:${body.fileName}`,
+    r2Key: body.r2Key,
+    sha256: body.sha256,
+    source: body.source,
+    ingestChannel: body.ingestChannel,
+    extractedFields: body.extractedFields,
     actorMemberId: auth.memberId,
   });
-
-  await c.env.DOCUMENT_QUEUE.send({ documentId: id, reason: "initial" });
 
   return c.json({ ok: true, id }, 201);
 });
