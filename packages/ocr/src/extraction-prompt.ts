@@ -16,6 +16,26 @@ export interface ExtractedDocFields {
   /** 金額,「元」為單位(不是分),例如 79900 或 79900.5。轉成 amountCents 由呼叫端處理。 */
   amount?: number;
   currency?: string;
+  // --- v1.2(2026-09-15,見 CODE_TASK_ocr-schema-v1.2-and-backlog-sync_20260915.md 第 3
+  // 節)—— 從 01_FAM_水電瓦斯 實際單據(水/電/瓦斯費收據)逐輪定案的 6 個新欄位,跟
+  // paraacco-invoice-ocr skill 的 SKILL.md 同步更新,兩邊 schema 要保持一致。---
+  /** 統編:購買商家(我方公司統編),單據非開立給公司(僅個人抬頭/無抬頭)則為 undefined。
+   * 跟 vendorTaxId(對方供應商統編)是兩個方向,不要混用。 */
+  buyerTaxId?: string;
+  /** 服務類帳號,統一命名涵蓋水號/電號/瓦斯號/手機門號/寬頻設備碼等——跟 contractNumber
+   * 刻意分開存放(見該欄位說明),不要合併成單一欄位。 */
+  accountNumber?: string;
+  /** 合約/保單編號,用於勞健保等非「服務帳號」類的合約——跟 accountNumber(水電瓦斯/電信
+   * 等服務類帳號)是正交的兩個概念,一份單據通常只會有其中一個。 */
+  contractNumber?: string;
+  /** 實際繳費日期,格式 YYYY-MM-DD,跟 docDate(單據/寄發日期)刻意分開記錄——常見單據
+   * (例如台北自來水收據)兩者不同,寄發日不等於實際繳費日。 */
+  paymentDate?: string;
+  /** 計費/用水(電)期間,格式 "YYYY-MM-DD~YYYY-MM-DD"。 */
+  billingPeriod?: string;
+  /** 發票年月,格式 "YYYY-MM~MM"(雙月發票常見,例如 "2026-03~04")——收據寄發週期可能跨到
+   * 下一個發票年月,獨立記錄不跟 docDate/paymentDate 混用。 */
+  invoicePeriod?: string;
   // --- 2026-09-13 財務文件自動分類新增(見 paraacco-code-handoff-package-20260913.md 第 3 節)---
   /** CORP-AP | CORP-STUDIO | PERS | PROJ-<code> | CORP-PERS | 待確認,由 @paraacco/domain 的
    * resolveScope()/classifyDocument() 進一步映射成 ownership/entity/project。 */
@@ -45,8 +65,14 @@ export function buildExtractionPrompt(embeddedText?: string): string {
   const schema = `{
   "docTypeCode": "INV(發票) | WAR(保證書) | RET(收據) | DEL(出貨單) | ORD(訂單) | SUB(訂閱/帳單) | MAN(說明書)",
   "vendorNameRaw": "供應商/店家名稱,原文照抄,不要翻譯或簡化",
-  "vendorTaxId": "統一編號,8 碼數字,查無則為 null",
+  "vendorTaxId": "供應商統一編號,8 碼數字,查無則為 null",
+  "buyerTaxId": "購買商家統一編號(我方公司統編),單據非開立給公司(僅個人抬頭/無抬頭)則為 null",
+  "accountNumber": "服務類帳號(水號/電號/瓦斯號/手機門號/寬頻設備碼等),查無則為 null",
+  "contractNumber": "合約/保單編號(勞健保等非服務帳號類),查無則為 null,跟 accountNumber 通常只會有其中一個",
   "docDate": "單據日期,格式 YYYY-MM-DD,民國年要換算成西元年。多個日期同時出現時優先取「繳費期限」,其次「開立日」,都沒有則為 null",
+  "paymentDate": "實際繳費日期,格式 YYYY-MM-DD,查無則為 null——跟 docDate 分開記錄,常見單據(例如水費收據)兩者不同,寄發日不等於實際繳費日",
+  "billingPeriod": "計費/用水(電)期間,格式 \"YYYY-MM-DD~YYYY-MM-DD\",查無則為 null",
+  "invoicePeriod": "發票年月,格式 \"YYYY-MM~MM\"(雙月發票常見,例如 \"2026-03~04\"),查無則為 null",
   "invoiceNo": "發票號碼,查無則為 null",
   "orderNo": "訂單號碼,查無則為 null",
   "serialNo": "商品序號或 IMEI,查無則為 null",
@@ -129,7 +155,13 @@ function normalizeFields(obj: Record<string, unknown>): ExtractedDocFields {
     docTypeCode: docTypeCode && (DOC_TYPE_CODES as readonly string[]).includes(docTypeCode) ? docTypeCode : undefined,
     vendorNameRaw: str(obj.vendorNameRaw),
     vendorTaxId: str(obj.vendorTaxId),
+    buyerTaxId: str(obj.buyerTaxId),
+    accountNumber: str(obj.accountNumber),
+    contractNumber: str(obj.contractNumber),
     docDate: str(obj.docDate),
+    paymentDate: str(obj.paymentDate),
+    billingPeriod: str(obj.billingPeriod),
+    invoicePeriod: str(obj.invoicePeriod),
     invoiceNo: str(obj.invoiceNo),
     orderNo: str(obj.orderNo),
     serialNo: str(obj.serialNo),

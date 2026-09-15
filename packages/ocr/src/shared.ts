@@ -49,8 +49,14 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
   };
 
   push("vendorNameRaw", "供應商", parsed.vendorNameRaw);
-  push("vendorTaxId", "統一編號", parsed.vendorTaxId);
+  push("vendorTaxId", "統一編號(供應商)", parsed.vendorTaxId);
+  push("buyerTaxId", "統一編號(購買方)", parsed.buyerTaxId);
+  push("accountNumber", "服務帳號", parsed.accountNumber);
+  push("contractNumber", "合約/保單編號", parsed.contractNumber);
   push("docDate", "日期", parsed.docDate);
+  push("paymentDate", "繳費日期", parsed.paymentDate);
+  push("billingPeriod", "計費期間", parsed.billingPeriod);
+  push("invoicePeriod", "發票年月", parsed.invoicePeriod);
   push("invoiceNo", "發票號碼", parsed.invoiceNo);
   push("orderNo", "訂單號碼", parsed.orderNo);
   push("serialNo", "序號/IMEI", parsed.serialNo);
