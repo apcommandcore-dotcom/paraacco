@@ -15,11 +15,21 @@
 //   2. 驗證 issuer(團隊網域)、過期時間(jose 的 jwtVerify 內建處理)。
 //   3. email 一律從驗證過的 JWT payload 讀,不再相信任何 client 可控的 header。
 //
-// 2026-09-06 補上 audience(aud)驗證——AUD tag 由 Theo 從 Zero Trust dashboard
-// (Access → Applications →「AP Internal Platform」→ Overview)提供。沒有這一層檢查時,
-// 同一個 Cloudflare 帳號底下任何其他 Access Application 簽發的合法 JWT 理論上都能通過
-// 這裡的驗證(因為都是同一個 team 的 JWKS 簽的、issuer 也相同)——加上 aud 比對後,只有
-// 簽給「這個」Access Application 的 JWT 才會通過。
+// 2026-09-06 補上 audience(aud)驗證——AUD tag 由 Theo 從 Zero Trust dashboard提供。沒有
+// 這一層檢查時,同一個 Cloudflare 帳號底下任何其他 Access Application 簽發的合法 JWT
+// 理論上都能通過這裡的驗證(因為都是同一個 team 的 JWKS 簽的、issuer 也相同)——加上 aud
+// 比對後,只有簽給「這個」Access Application 的 JWT 才會通過。
+//
+// 2026-09-16 修正:原本這裡的 AUD 對應「AP Internal Platform」這個涵蓋 *.parallelserver.org
+// 的萬用字元 Application——但 Theo 後來另外建了一個路徑限定在 acco-api 的獨立 Access
+// Application(叫「acco-api」),一開始只保護 `api/documents`,後來改成 `api/*`。路徑改成
+// `api/*` 之後,這個更精確的 Application 對 `/api/*` 底下的所有路徑(包含人類登入跟
+// Service Token)都比萬用字元的「AP Internal Platform」優先匹配,實際簽發 JWT 的變成
+// 「acco-api」這個 Application,AUD 也跟著變成它的——這裡的常數要對應「目前實際保護這個
+// Worker 的 Application」,不是固定不變的,Zero Trust 後台的 Access Application 設定改了
+// (尤其是路徑範圍),都要回來確認這裡的值有沒有跟著變。查法:Zero Trust → Access →
+// Applications →「acco-api」→ Overview → Application Audience (AUD) Tag,見
+// CODE_TASK_whoami-null-identity-bug_20260916.md 的除錯過程。
 //
 // 2026-09-14 補上 Service Token(common_name)支援——每日批次進件排程腳本用 Access
 // Service Token(不是真人登入)呼叫 API,這種 JWT 沒有 email claim,改用 common_name
@@ -33,7 +43,7 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 
 const TEAM_DOMAIN = "atelierparallel.cloudflareaccess.com";
 const CERTS_URL = `https://${TEAM_DOMAIN}/cdn-cgi/access/certs`;
-const ACCESS_APP_AUD = "82d0652ecfc12a9438b2e9b2574ae72ad4a1e4ff3b137573cdd4a1289a0ace41";
+const ACCESS_APP_AUD = "709314e6b1afa299b287d26c5ca807f367a090369ee6599caff8c4da93d3d948";
 
 // createRemoteJWKSet 內建快取(預設約 30 分鐘,依 jose 版本而定),不用自己再包一層快取。
 const JWKS = createRemoteJWKSet(new URL(CERTS_URL));
@@ -65,11 +75,6 @@ export function resolveIdentityFromPayload(payload: JWTPayload): VerifiedAccessI
     const mapped = COMMON_NAME_ALLOWLIST[payload.common_name];
     if (mapped) return mapped;
   }
-  // 暫時除錯 log(2026-09-16,見 CODE_TASK_whoami-null-identity-bug_20260916.md)——JWT 簽章
-  // 驗證通過了,但 email/common_name 都對不上白名單,把實際看到的 common_name 印出來,
-  // 才知道要在 COMMON_NAME_ALLOWLIST 填什麼值(有可能不是 Client ID 本身,是 Zero Trust
-  // 後台幫這個 Service Token 取的名字)。定位根因後移除這行。
-  console.error("[access-jwt] resolveIdentityFromPayload: no email, common_name unmatched:", payload.common_name);
   return null;
 }
 
@@ -81,12 +86,7 @@ export function resolveIdentityFromPayload(payload: JWTPayload): VerifiedAccessI
  */
 export async function verifyAccessJwt(headers: Headers): Promise<VerifiedAccessIdentity | null> {
   const token = headers.get("Cf-Access-Jwt-Assertion");
-  if (!token) {
-    // 暫時除錯 log(見上方 resolveIdentityFromPayload 的除錯 log 註解,同一個任務)——確認
-    // 請求到底有沒有帶這個 header,排除「Access 邊緣根本沒把 JWT 夾帶過來」這個可能性。
-    console.error("[access-jwt] verifyAccessJwt: missing Cf-Access-Jwt-Assertion header");
-    return null;
-  }
+  if (!token) return null;
 
   try {
     const { payload } = await jwtVerify(token, JWKS, {
@@ -94,11 +94,10 @@ export async function verifyAccessJwt(headers: Headers): Promise<VerifiedAccessI
       audience: ACCESS_APP_AUD,
     });
     return resolveIdentityFromPayload(payload);
-  } catch (err) {
-    // 暫時除錯 log——簽章不對、過期、issuer/audience 不符都會丟到這裡,印出實際錯誤訊息
-    // 才能分辨是哪一種(JWKS 抓取失敗?audience 不符?issuer 不符?)。定位根因後移除,
-    // 正常情況下這裡不回傳任何細節給呼叫端(見下面的 return null),只是暫時多印 log。
-    console.error("[access-jwt] verifyAccessJwt: jwtVerify failed:", err);
+  } catch {
+    // 簽章不對、過期、issuer/audience 不符都會丟到這裡——不要把細節回傳給呼叫端,一律當
+    // 未登入。2026-09-16 曾經因為 AUD 不對卡住(見上方常數註解),當時暫時加過 log 定位,
+    // 定位到之後就移除了,診斷紀錄留在 CODE_TASK_whoami-null-identity-bug_20260916.md。
     return null;
   }
 }
