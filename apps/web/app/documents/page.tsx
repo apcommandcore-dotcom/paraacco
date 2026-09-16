@@ -23,8 +23,10 @@ import {
   STAGE_LABELS,
   WARRANTY_STATUS_LABELS,
   type DocumentRow,
+  type EntityRow,
   type ExtractedField,
   type DocumentFile,
+  type ProjectRow,
   type PurchaseRow,
   type AssetRow,
   type AssetDocumentLink,
@@ -305,6 +307,8 @@ type PurchaseEditForm = {
   currency: string;
   purchaseDate: string;
   status: string;
+  entityId: string;
+  projectId: string;
 };
 
 function purchaseToForm(p: PurchaseRow): PurchaseEditForm {
@@ -316,6 +320,8 @@ function purchaseToForm(p: PurchaseRow): PurchaseEditForm {
     currency: p.currency,
     purchaseDate: p.purchaseDate,
     status: p.status,
+    entityId: p.entityId ?? "",
+    projectId: p.projectId ?? "",
   };
 }
 
@@ -328,15 +334,34 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<PurchaseEditForm | null>(null);
   const [saving, setSaving] = useState(false);
+  // entity/project 篩選(2026-09-13 財務文件自動分類新增,架構文件第 6 節「List 畫面擴充
+  // 篩選」)—— 後端 GET /api/purchases 已支援 entityId/projectId query param。
+  const [entities, setEntities] = useState<EntityRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [entityFilter, setEntityFilter] = useState<string | null>(null);
+  const [projectFilter, setProjectFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ entities: EntityRow[] }>("/api/entities")
+      .then((d) => setEntities(d.entities))
+      .catch(() => {});
+    apiFetch<{ projects: ProjectRow[] }>("/api/projects")
+      .then((d) => setProjects(d.projects))
+      .catch(() => {});
+  }, []);
 
   function load() {
-    const path = scope ? `/api/purchases?ownership=${scope}` : "/api/purchases";
-    apiFetch<{ purchases: PurchaseRow[] }>(path)
+    const params = new URLSearchParams();
+    if (scope) params.set("ownership", scope);
+    if (entityFilter) params.set("entityId", entityFilter);
+    if (projectFilter) params.set("projectId", projectFilter);
+    const qs = params.toString();
+    apiFetch<{ purchases: PurchaseRow[] }>(`/api/purchases${qs ? `?${qs}` : ""}`)
       .then((d) => setPurchases(d.purchases))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }
 
-  useEffect(load, [scope]);
+  useEffect(load, [scope, entityFilter, projectFilter]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -364,6 +389,8 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
           currency: form.currency,
           purchaseDate: form.purchaseDate,
           status: form.status,
+          entityId: form.entityId || null,
+          projectId: form.projectId || null,
         }),
       });
       const refreshed = await apiFetch<{ purchase: PurchaseRow; tags: string[] }>(`/api/purchases/${detail.purchase.id}`);
@@ -380,6 +407,40 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
   return (
     <>
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
+
+      {(entities.length > 0 || projects.length > 0) && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {entities.length > 0 && (
+            <select
+              value={entityFilter ?? ""}
+              onChange={(e) => setEntityFilter(e.target.value || null)}
+              className="h-[30px] border border-line bg-surface px-2 text-xs text-foreground"
+            >
+              <option value="">全部法律主體</option>
+              {entities.map((en) => (
+                <option key={en.id} value={en.id}>
+                  {en.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {projects.length > 0 && (
+            <select
+              value={projectFilter ?? ""}
+              onChange={(e) => setProjectFilter(e.target.value || null)}
+              className="h-[30px] border border-line bg-surface px-2 text-xs text-foreground"
+            >
+              <option value="">全部專案</option>
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           {purchases === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
@@ -392,6 +453,8 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                   <TableHead>供應商</TableHead>
                   <TableHead>摘要</TableHead>
                   <TableHead>金額</TableHead>
+                  <TableHead>法律主體</TableHead>
+                  <TableHead>專案</TableHead>
                   <TableHead>狀態</TableHead>
                   <TableHead>日期</TableHead>
                 </TableRow>
@@ -403,6 +466,8 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                     <TableCell>{p.vendorNameRaw}</TableCell>
                     <TableCell className="truncate">{p.summary}</TableCell>
                     <TableCell>{p.currency} {(p.amountCents / 100).toFixed(2)}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{entities.find((en) => en.id === p.entityId)?.name ?? "—"}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{projects.find((pr) => pr.id === p.projectId)?.name ?? "—"}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(p.status)}>{p.status}</Badge>
                     </TableCell>
@@ -452,6 +517,14 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">日期</td>
                   <td className="py-1.5">{detail.purchase.purchaseDate}</td>
                 </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">法律主體</td>
+                  <td className="py-1.5">{entities.find((en) => en.id === detail.purchase.entityId)?.name ?? "—"}</td>
+                </tr>
+                <tr className="border-b border-border">
+                  <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">專案</td>
+                  <td className="py-1.5">{projects.find((p) => p.id === detail.purchase.projectId)?.name ?? "—"}</td>
+                </tr>
                 <tr>
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">狀態</td>
                   <td className="py-1.5">
@@ -500,6 +573,34 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
             </div>
             <Field label="日期">
               <Input type="date" value={form.purchaseDate} onChange={(e) => setForm((f) => f && { ...f, purchaseDate: e.target.value })} />
+            </Field>
+            <Field label="法律主體">
+              <select
+                value={form.entityId}
+                onChange={(e) => setForm((f) => f && { ...f, entityId: e.target.value })}
+                className="h-9 w-full border border-input bg-background px-2 text-sm"
+              >
+                <option value="">(無)</option>
+                {entities.map((en) => (
+                  <option key={en.id} value={en.id}>
+                    {en.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="專案">
+              <select
+                value={form.projectId}
+                onChange={(e) => setForm((f) => f && { ...f, projectId: e.target.value })}
+                className="h-9 w-full border border-input bg-background px-2 text-sm"
+              >
+                <option value="">(無)</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="狀態">
               <select

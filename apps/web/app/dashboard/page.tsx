@@ -12,13 +12,18 @@ import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { apiFetch, OWNERSHIP_LABELS, type DocumentRow, type OwnershipScope, type WarrantyItem } from "@/lib/api";
-
-interface Purchase {
-  id: string;
-  status: string;
-  amountCents: number;
-}
+import {
+  apiFetch,
+  OWNERSHIP_LABELS,
+  RECONCILIATION_STATUS_LABELS,
+  type DocumentRow,
+  type EntityRow,
+  type OwnershipScope,
+  type ProjectRow,
+  type PurchaseRow,
+  type StatementLineRow,
+  type WarrantyItem,
+} from "@/lib/api";
 
 interface Asset {
   id: string;
@@ -35,28 +40,56 @@ interface ActivityEntry {
 }
 
 export default function DashboardPage() {
-  const { scope } = useScope();
+  const { scope, setScope } = useScope();
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
-  const [purchases, setPurchases] = useState<Purchase[] | null>(null);
+  const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
   const [assets, setAssets] = useState<Asset[] | null>(null);
   const [warranty, setWarranty] = useState<WarrantyItem[] | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[] | null>(null);
+  const [entities, setEntities] = useState<EntityRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [statementLines, setStatementLines] = useState<StatementLineRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // entity/project 篩選(2026-09-13 財務文件自動分類新增,架構文件第 6 節「總覽三分頁」)——
+  // 跟上面的 ownership scope(既有的範圍切換器,corp/per/advance/custody)是正交的兩個維度,
+  // entityId 只在 scope==='corp' 時有意義(平行空間/事務所都是公司範疇底下的法律主體),
+  // projectId 則不管 scope 是什麼都可以獨立篩選(專案支出可能是任何 ownership)。
+  const [entityId, setEntityId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiFetch<{ entities: EntityRow[] }>("/api/entities")
+      .then((d) => setEntities(d.entities))
+      .catch(() => {});
+    apiFetch<{ projects: ProjectRow[] }>("/api/projects")
+      .then((d) => setProjects(d.projects))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const q = scope ? `?ownership=${scope}` : "";
+    const statementQ = entityId ? `?entityId=${entityId}` : "";
     setDocuments(null);
     setPurchases(null);
     setAssets(null);
     setWarranty(null);
+    setStatementLines(null);
     Promise.all([
       apiFetch<{ documents: DocumentRow[] }>(`/api/documents${q}`).then((d) => setDocuments(d.documents)),
-      apiFetch<{ purchases: Purchase[] }>(`/api/purchases${q}`).then((d) => setPurchases(d.purchases)),
+      apiFetch<{ purchases: PurchaseRow[] }>(`/api/purchases${q}`).then((d) => setPurchases(d.purchases)),
       apiFetch<{ assets: Asset[] }>(`/api/assets${q}`).then((d) => setAssets(d.assets)),
       apiFetch<{ items: WarrantyItem[] }>(`/api/warranty${q}`).then((d) => setWarranty(d.items)),
       apiFetch<{ activity: ActivityEntry[] }>("/api/activity?limit=20").then((d) => setActivity(d.activity)),
+      apiFetch<{ statementLines: StatementLineRow[] }>(`/api/statement-lines${statementQ}`).then((d) => setStatementLines(d.statementLines)),
     ]).catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [scope]);
+  }, [scope, entityId]);
+
+  // entity/project 篩選只套用在 purchases(唯一有這兩個欄位的實體)——documents/assets 沒有
+  // entity_id/project_id 直欄(見 packages/db/src/schema.ts entities 註解:目前只有 purchases
+  // 有這個維度),所以只有「採購案總數」這個 KPI 會隨 entity/project 篩選變動,其餘 KPI
+  // 維持只依 ownership 篩選,這是資料模型的真實反映,不是漏做。
+  const filteredPurchases = purchases?.filter((p) => (!entityId || p.entityId === entityId) && (!projectId || p.projectId === projectId));
 
   const pendingReview = documents?.filter((d) => d.status === "review").length ?? null;
   const failed = documents?.filter((d) => d.status === "failed").length ?? null;
@@ -70,8 +103,19 @@ export default function DashboardPage() {
       <div className="mb-1.5 flex items-baseline gap-2.5">
         <h1 className="m-0 text-[23px] font-extrabold tracking-tight">總覽</h1>
         <span className="font-mono text-[10px] tracking-[0.16em] text-foreground-3">OVERVIEW</span>
-        {scope && <span className="text-xs text-foreground-3">(範圍:{OWNERSHIP_LABELS[scope]})</span>}
       </div>
+
+      <ScopeTabs
+        scope={scope}
+        setScope={setScope}
+        entityId={entityId}
+        setEntityId={setEntityId}
+        projectId={projectId}
+        setProjectId={setProjectId}
+        entities={entities}
+        projects={projects}
+      />
+
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
 
       <div className="mb-6 mt-5 grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(208px, 1fr))" }}>
@@ -92,7 +136,14 @@ export default function DashboardPage() {
           href="/documents?status=failed"
         />
         <Kpi label="已歸檔文件" value={archived} unit="份" tag={{ text: "累計", variant: "default" }} hint="已完成覆核並歸檔" href="/documents?status=archived" />
-        <Kpi label="採購案總數" value={purchases?.length ?? null} unit="案" tag={{ text: "累計", variant: "default" }} hint="所有已建立的採購案" href="/purchases" />
+        <Kpi
+          label="採購案總數"
+          value={filteredPurchases?.length ?? null}
+          unit="案"
+          tag={{ text: "累計", variant: "default" }}
+          hint={entityId || projectId ? "依目前篩選條件" : "所有已建立的採購案"}
+          href="/purchases"
+        />
         <Kpi label="資產總數" value={assets?.length ?? null} unit="項" tag={{ text: "累計", variant: "default" }} hint="所有已登記的資產" href="/assets" />
         <Kpi
           label="本月單據金額"
@@ -106,6 +157,7 @@ export default function DashboardPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="flex flex-col gap-4">
+          <ReconciliationSummaryWidget lines={statementLines} />
           <TodoWidget documents={documents} warranty={warranty} />
           <WarrantyWidget warranty={warranty} />
         </div>
@@ -133,6 +185,145 @@ export default function DashboardPage() {
         </CardContent>
       </Card>
     </AppShell>
+  );
+}
+
+// 總覽三分頁(架構文件第 6 節)—— 全部/公司/家庭個人直接沿用既有的範圍切換器(ownership
+// scope,corp/per),不是新概念;「公司」選中時額外顯示 entity 篩選 chip(平行空間/事務所),
+// 「專案」是獨立的額外篩選(不是 ownership 的合法值,任何 ownership 底下的採購案都可能掛
+// 專案),用一個下拉選單,不強制跟前三個分頁互斥——可以同時選「公司」+ 某個專案。
+function ScopeTabs({
+  scope,
+  setScope,
+  entityId,
+  setEntityId,
+  projectId,
+  setProjectId,
+  entities,
+  projects,
+}: {
+  scope: OwnershipScope | null;
+  setScope: (s: OwnershipScope | null) => void;
+  entityId: string | null;
+  setEntityId: (v: string | null) => void;
+  projectId: string | null;
+  setProjectId: (v: string | null) => void;
+  entities: EntityRow[];
+  projects: ProjectRow[];
+}) {
+  const tabs: { value: OwnershipScope | null; label: string }[] = [
+    { value: null, label: "全部" },
+    { value: "corp", label: "公司" },
+    { value: "per", label: "家庭個人" },
+  ];
+
+  return (
+    <div className="mb-1 flex flex-wrap items-center gap-3">
+      <div className="flex border border-line">
+        {tabs.map((tab) => (
+          <button
+            key={tab.label}
+            type="button"
+            onClick={() => {
+              setScope(tab.value);
+              if (tab.value !== "corp") setEntityId(null);
+            }}
+            className={`border-r border-line px-3 py-1.5 text-xs last:border-r-0 ${
+              scope === tab.value ? "bg-brand font-semibold text-on-brand" : "bg-surface text-foreground hover:bg-nav-sub"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {scope === "corp" && entities.length > 0 && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-foreground-3">法律主體:</span>
+          <button
+            type="button"
+            onClick={() => setEntityId(null)}
+            className={`border px-2 py-1 text-[11px] ${entityId === null ? "border-brand bg-brand text-on-brand" : "border-line bg-surface text-foreground-2 hover:bg-nav-sub"}`}
+          >
+            全部
+          </button>
+          {entities.map((e) => (
+            <button
+              key={e.id}
+              type="button"
+              onClick={() => setEntityId(e.id)}
+              className={`border px-2 py-1 text-[11px] ${entityId === e.id ? "border-brand bg-brand text-on-brand" : "border-line bg-surface text-foreground-2 hover:bg-nav-sub"}`}
+            >
+              {e.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {projects.length > 0 && (
+        <select
+          value={projectId ?? ""}
+          onChange={(e) => setProjectId(e.target.value || null)}
+          className="h-[26px] border border-line bg-surface px-2 text-xs text-foreground"
+        >
+          <option value="">全部專案</option>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+// 勾稽狀態摘要(架構文件第 6 節「總覽三分頁」要求的三個指標之一)—— 依 entityId 篩選(對應
+// 上面 ScopeTabs 選的法律主體),點擊前往對帳頁看細節。
+function ReconciliationSummaryWidget({ lines }: { lines: StatementLineRow[] | null }) {
+  if (lines === null) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>勾稽狀態摘要</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">載入中…</CardContent>
+      </Card>
+    );
+  }
+
+  const counts = {
+    matched: lines.filter((l) => l.reconciliationStatus === "matched").length,
+    suggested: lines.filter((l) => l.reconciliationStatus === "suggested").length,
+    unmatched: lines.filter((l) => l.reconciliationStatus === "unmatched").length,
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>勾稽狀態摘要</CardTitle>
+      </CardHeader>
+      <CardContent className="p-0">
+        {lines.length === 0 ? (
+          <div className="p-4 text-sm text-muted-foreground">目前沒有對帳單明細列。</div>
+        ) : (
+          <Link href="/reconciliation" className="flex items-center justify-around gap-2 px-4 py-3 no-underline hover:bg-accent">
+            <ReconciliationCount label={RECONCILIATION_STATUS_LABELS.matched} count={counts.matched} variant="success" />
+            <ReconciliationCount label={RECONCILIATION_STATUS_LABELS.suggested} count={counts.suggested} variant="warning" />
+            <ReconciliationCount label={RECONCILIATION_STATUS_LABELS.unmatched} count={counts.unmatched} variant="destructive" />
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ReconciliationCount({ label, count, variant }: { label: string; count: number; variant: BadgeProps["variant"] }) {
+  return (
+    <div className="flex flex-col items-center gap-1">
+      <span className="font-mono text-xl font-bold text-foreground">{count}</span>
+      <Badge variant={variant}>{label}</Badge>
+    </div>
   );
 }
 

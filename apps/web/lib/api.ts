@@ -141,6 +141,9 @@ export interface PurchaseRow {
   currency: string;
   purchaseDate: string;
   status: string;
+  // 2026-09-13 財務文件自動分類新增,見 EntityRow/ProjectRow。
+  entityId: string | null;
+  projectId: string | null;
 }
 
 export interface AssetRow {

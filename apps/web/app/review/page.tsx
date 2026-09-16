@@ -17,8 +17,10 @@ import {
   apiFetch,
   API_BASE,
   type DocumentRow,
+  type EntityRow,
   type ExtractedField,
   type DocumentFile,
+  type ProjectRow,
   type RelationCandidate,
   type PurchaseRow,
   type AssetRow,
@@ -54,6 +56,23 @@ function ReviewWorkbench() {
   const [manualQuery, setManualQuery] = useState("");
   const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
   const [assets, setAssets] = useState<AssetRow[] | null>(null);
+
+  // Gemini 分類建議(2026-09-13 財務文件自動分類,架構文件第 6 節「Review 工作台擴充」)——
+  // entity_id/project_id 建議值已經隨 8 步驟 pipeline 的 classify 階段寫進
+  // document_extracted_fields(見 apps/api/src/routes/internal/documents.ts),跟其他擷取
+  // 欄位一樣包在 detail.fields 裡,這裡只是把這兩個特別挑出來獨立顯示、做成可以一鍵套用的
+  // 卡片,不是新的資料來源。
+  const [entities, setEntities] = useState<EntityRow[]>([]);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+
+  useEffect(() => {
+    apiFetch<{ entities: EntityRow[] }>("/api/entities")
+      .then((d) => setEntities(d.entities))
+      .catch(() => {});
+    apiFetch<{ projects: ProjectRow[] }>("/api/projects")
+      .then((d) => setProjects(d.projects))
+      .catch(() => {});
+  }, []);
 
   const loadQueue = useCallback(async () => {
     try {
@@ -109,6 +128,27 @@ function ReviewWorkbench() {
     router.replace("/review");
   }
 
+  // 文件連結到採購案時,順便把 Gemini 分類建議(entity_id/project_id,見上方 useState 註解)
+  // 套到目標採購案上——只在採購案本身還沒有值時才填(不覆蓋人工已經設定過的值),這樣「連結」
+  // 這個既有動作本身就是「一鍵確認分類建議」,不需要另外的按鈕跟額外一次點擊。失敗不擋主流程
+  // (連結本身已經成功),只記錄,不彈錯誤。
+  async function applySuggestionToPurchase(purchaseId: string) {
+    const entitySuggestion = detail?.fields.find((f) => f.fieldKey === "entity_id")?.value;
+    const projectSuggestion = detail?.fields.find((f) => f.fieldKey === "project_id")?.value;
+    if (!entitySuggestion && !projectSuggestion) return;
+    try {
+      const { purchase } = await apiFetch<{ purchase: PurchaseRow }>(`/api/purchases/${purchaseId}`);
+      const patch: { entityId?: string; projectId?: string } = {};
+      if (entitySuggestion && !purchase.entityId) patch.entityId = entitySuggestion;
+      if (projectSuggestion && !purchase.projectId) patch.projectId = projectSuggestion;
+      if (Object.keys(patch).length > 0) {
+        await apiFetch(`/api/purchases/${purchaseId}`, { method: "POST", body: JSON.stringify(patch) });
+      }
+    } catch {
+      // 套用建議失敗不影響文件已經連結成功這件事,人工之後也可以直接去購買案詳情頁手動改。
+    }
+  }
+
   async function linkCandidate(candidate: RelationCandidate) {
     if (!selectedId) return;
     setBusy(true);
@@ -118,6 +158,7 @@ function ReviewWorkbench() {
         method: "POST",
         body: JSON.stringify({ targetType: candidate.targetType, targetId: candidate.targetId, candidateId: candidate.id }),
       });
+      if (candidate.targetType === "purchase") await applySuggestionToPurchase(candidate.targetId);
       await refreshAfterAction();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -137,6 +178,7 @@ function ReviewWorkbench() {
         method: "POST",
         body: JSON.stringify({ targetType, targetId }),
       });
+      if (targetType === "purchase") await applySuggestionToPurchase(targetId);
       await refreshAfterAction();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -160,6 +202,13 @@ function ReviewWorkbench() {
   }
 
   const originalFile = detail?.files.find((f) => f.kind === "original" && f.isCurrent);
+  const entitySuggestionId = detail?.fields.find((f) => f.fieldKey === "entity_id")?.value;
+  const projectSuggestionId = detail?.fields.find((f) => f.fieldKey === "project_id")?.value;
+  const entitySuggestionName = entities.find((e) => e.id === entitySuggestionId)?.name;
+  const projectSuggestionName = projects.find((p) => p.id === projectSuggestionId)?.name;
+  // entity_id/project_id 已經拉出來獨立顯示(見下方「分類建議」卡片),不用在通用擷取欄位
+  // 表格裡重複出現一次。
+  const displayFields = detail?.fields.filter((f) => f.fieldKey !== "entity_id" && f.fieldKey !== "project_id") ?? [];
 
   return (
     <AppShell>
@@ -226,9 +275,28 @@ function ReviewWorkbench() {
                   </div>
                 )}
 
+                {(entitySuggestionId || projectSuggestionId) && (
+                  <div className="mb-4 border border-info-line bg-info-bg p-3 text-sm">
+                    <div className="mb-1.5 text-xs font-semibold uppercase tracking-widest text-info">Gemini 分類建議</div>
+                    {entitySuggestionId && (
+                      <div className="mb-1">
+                        法律主體:<span className="font-medium">{entitySuggestionName ?? entitySuggestionId}</span>
+                      </div>
+                    )}
+                    {projectSuggestionId && (
+                      <div>
+                        專案:<span className="font-medium">{projectSuggestionName ?? projectSuggestionId}</span>
+                      </div>
+                    )}
+                    <p className="mt-1.5 text-xs text-foreground-3">
+                      連結到採購案時會自動套用(不會覆蓋採購案已經設定過的值),不需要另外操作。
+                    </p>
+                  </div>
+                )}
+
                 <table className="w-full text-sm">
                   <tbody>
-                    {detail.fields.map((f) => (
+                    {displayFields.map((f) => (
                       <tr key={f.id} className="border-b border-border last:border-0">
                         <td className="w-1/3 py-2 pr-3 text-xs text-muted-foreground">{f.label}</td>
                         <td className="py-2 pr-3">{f.value ?? "—"}</td>
@@ -237,7 +305,7 @@ function ReviewWorkbench() {
                         </td>
                       </tr>
                     ))}
-                    {detail.fields.length === 0 && (
+                    {displayFields.length === 0 && (
                       <tr>
                         <td className="py-4 text-sm text-muted-foreground">沒有擷取到欄位。</td>
                       </tr>
