@@ -2,7 +2,7 @@
 
 import { Hono } from "hono";
 import { and, desc, eq } from "drizzle-orm";
-import { activityLog, assets, createDb, documentAssetLinks, documents, nextId, warrantySubscriptions } from "@paraacco/db";
+import { activityLog, assets, assetTags, createDb, documentAssetLinks, documents, nextId, warrantySubscriptions } from "@paraacco/db";
 import { computeWarrantyStatus } from "@paraacco/domain";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
@@ -62,7 +62,10 @@ assetsRoute.get("/:id", async (c) => {
     .map((w) => ({ ...w, status: computeWarrantyStatus({ endDate: w.endDate, reminderDaysBefore: w.reminderDaysBefore }) }))
     .sort((a, b) => statusPriority[a.status] - statusPriority[b.status] || a.endDate.localeCompare(b.endDate));
 
-  return c.json({ asset: row, documentLinks: links, warranty: warrantyWithStatus[0] ?? null });
+  // 2026-09-16「彈性標籤項目」模型新增,比照 purchases.ts 既有的 tags 回傳方式。
+  const tags = await db.select().from(assetTags).where(eq(assetTags.assetId, id));
+
+  return c.json({ asset: row, documentLinks: links, warranty: warrantyWithStatus[0] ?? null, tags: tags.map((t) => t.tag) });
 });
 
 assetsRoute.post("/", async (c) => {
@@ -88,6 +91,8 @@ assetsRoute.post("/", async (c) => {
     note?: string;
     // 選填:建立當下順便關聯一份既有文件(見 POST /:id/link-document 的說明)。
     linkDocumentId?: string;
+    // 2026-09-16「彈性標籤項目」模型新增,比照 purchases.ts 既有的 tags。
+    tags?: string[];
   }>();
 
   const db = createDb(c.env.DB);
@@ -123,6 +128,10 @@ assetsRoute.post("/", async (c) => {
     text: `${auth.name ?? auth.email ?? "系統"} 手動新增資產:${body.name}`,
     actorMemberId: auth.memberId,
   });
+
+  if (body.tags?.length) {
+    await db.insert(assetTags).values(body.tags.map((tag) => ({ assetId: id, tag })));
+  }
 
   if (body.linkDocumentId) {
     await db.insert(documentAssetLinks).values({

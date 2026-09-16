@@ -248,6 +248,26 @@ export const assets = sqliteTable(
   }),
 );
 
+// 資產標籤 —— 2026-09-16「彈性標籤項目」模型新增,比照既有的 purchase_tags(自由文字,不是
+// 固定選單),讓資產項目也能自由貼標籤。刻意不做 document_tags——標籤是「使用者建立/編輯的
+// 項目(item)」這個概念底下的東西,項目落地後是 purchases 或 assets 的一列,不是原始
+// documents(一份原始文件可能透過 document_purchase_links/document_asset_links 同時是好幾個
+// 不同項目的來源憑證,幫「文件本身」貼標籤語意上會混淆——是哪個項目的標籤?標籤應該跟著
+// 使用者實際在操作的項目走,見 paraacco-flexible-item-model-design-20260916.md 第 1 節)。
+export const assetTags = sqliteTable(
+  "asset_tags",
+  {
+    assetId: text("asset_id")
+      .notNull()
+      .references(() => assets.id),
+    tag: text("tag").notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.assetId, t.tag] }),
+    tagIdx: index("asset_tags_tag_idx").on(t.tag),
+  }),
+);
+
 // ---------------------------------------------------------------------------
 // 文件(邏輯文件本體)—— 規格 2.5、2.9、3.5。實體檔案見 document_files,
 // OCR 欄位見 document_extracted_fields,與購買案/資產的關聯見 document_*_links
@@ -403,6 +423,51 @@ export const documentAssetLinks = sqliteTable(
       sql`${t.relationKind} IN ('primary', 'supporting', 'warranty', 'manual')`,
     ),
     linkedByCheck: check("document_asset_links_linked_by_check", sql`${t.linkedBy} IN ('manual', 'auto', 'import')`),
+  }),
+);
+
+// 同一案件的關聯文件 —— 2026-09-16「彈性標籤項目」+「依標題瀏覽」定案時一併建立(見
+// paraacco-document-case-links-design-evaluation-20260916.md、
+// paraacco-flexible-item-model-design-20260916.md)。跟上面的 document_purchase_links/
+// document_asset_links 是不同性質、互補的兩種關聯,不會打架:
+//   - document_purchase_links/document_asset_links:一份文件是「哪個項目(採購案/資產)的
+//     憑證」——文件 ↔ 項目。
+//   - document_case_links:同一件事(同一期帳單、同一次採購)底下,原始文件彼此之間的關係
+//     (繳費單→催繳→收據 這種時間序列鏈,或發票+保證書+說明書 這種同來源群組)——文件 ↔
+//     文件,不涉及項目。
+// 一份文件可以同時出現在兩套關聯裡(例如它既是案件鏈裡的「收據」,也是某筆採購案的憑證),
+// 兩套資料互不影響,各自查詢。
+//
+// case_id 借用該案件「第一份文件」的 document.id 本身,不另建 cases 主檔表——之後如果真的
+// 需要案件層級的彙總資訊(總金額、目前狀態),可以再疊加一張 cases 表,不影響這裡的設計。
+export const documentCaseLinks = sqliteTable(
+  "document_case_links",
+  {
+    caseId: text("case_id").notNull(),
+    documentId: text("document_id")
+      .notNull()
+      .references(() => documents.id),
+    // 帳單流程類(payment/reminder/penalty/enforcement/receipt)+ 資產購買類 —— 後者直接
+    // 沿用 documents.docTypeCode 既有字典(INV/WAR/RET/DEL/ORD/SUB/MAN),不重複發明一套
+    // 新代碼,見 paraacco-document-case-links-design-evaluation-20260916.md 第 2 節。
+    role: text("role").notNull(),
+    linkedBy: text("linked_by").notNull(), // 'manual' | 'auto',跟既有兩張 links 表同一個慣例
+    confidenceScore: integer("confidence_score"),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.caseId, t.documentId] }),
+    documentIdx: index("document_case_links_document_idx").on(t.documentId),
+    roleCheck: check(
+      "document_case_links_role_check",
+      sql`${t.role} IN ('payment', 'reminder', 'penalty', 'enforcement', 'receipt', 'INV', 'WAR', 'RET', 'DEL', 'ORD', 'SUB', 'MAN')`,
+    ),
+    linkedByCheck: check("document_case_links_linked_by_check", sql`${t.linkedBy} IN ('manual', 'auto')`),
+    confidenceCheck: check(
+      "document_case_links_confidence_check",
+      sql`${t.confidenceScore} IS NULL OR (${t.confidenceScore} >= 0 AND ${t.confidenceScore} <= 100)`,
+    ),
   }),
 );
 

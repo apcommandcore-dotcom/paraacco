@@ -5,7 +5,7 @@
 
 import { Hono } from "hono";
 import { and, desc, eq } from "drizzle-orm";
-import { createDb, nextId, purchases, purchaseTags } from "@paraacco/db";
+import { createDb, documentPurchaseLinks, documents, nextId, purchases, purchaseTags } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
@@ -36,13 +36,29 @@ purchasesRoute.get("/", async (c) => {
   return c.json({ purchases: rows });
 });
 
+// 2026-09-16「彈性標籤項目」模型補上 documentLinks(比照 assets.ts 的 GET /:id)——一筆採購案
+// 可能是從同一份來源文件拆出來的好幾個獨立項目之一(見 schema.ts 的 documentPurchaseLinks
+// 註解),詳情頁要看得到「這筆項目連回了哪些文件」,不能只看得到採購案自己的欄位。
 purchasesRoute.get("/:id", async (c) => {
   const db = createDb(c.env.DB);
   const id = c.req.param("id");
   const [row] = await db.select().from(purchases).where(eq(purchases.id, id)).limit(1);
   if (!row) return c.json({ error: "not_found" }, 404);
   const tags = await db.select().from(purchaseTags).where(eq(purchaseTags.purchaseId, id));
-  return c.json({ purchase: row, tags: tags.map((t) => t.tag) });
+
+  const links = await db
+    .select({
+      documentId: documentPurchaseLinks.documentId,
+      relationKind: documentPurchaseLinks.relationKind,
+      docTypeCode: documents.docTypeCode,
+      vendorNameRaw: documents.vendorNameRaw,
+      status: documents.status,
+    })
+    .from(documentPurchaseLinks)
+    .innerJoin(documents, eq(documents.id, documentPurchaseLinks.documentId))
+    .where(eq(documentPurchaseLinks.purchaseId, id));
+
+  return c.json({ purchase: row, tags: tags.map((t) => t.tag), documentLinks: links });
 });
 
 purchasesRoute.post("/", async (c) => {
@@ -72,6 +88,11 @@ purchasesRoute.post("/", async (c) => {
     // project_id),也可以由人工直接選擇/留空。
     entityId?: string;
     projectId?: string;
+    // 2026-09-16「彈性標籤項目」模型新增(比照 assets.ts 既有的 linkDocumentId)——選填,
+    // 建立當下順便連結一份既有文件。一張發票列了好幾樣不同的東西時,同一個 documentId
+    // 可以連續呼叫這支端點好幾次、每次帶不同的 summary/tags,拆成好幾筆各自獨立的採購案,
+    // 全部連回同一份來源文件,不會互相覆蓋——document_purchase_links 本來就是多對多。
+    linkDocumentId?: string;
   }>();
 
   const db = createDb(c.env.DB);
@@ -104,6 +125,16 @@ purchasesRoute.post("/", async (c) => {
 
   if (body.tags?.length) {
     await db.insert(purchaseTags).values(body.tags.map((tag) => ({ purchaseId: id, tag })));
+  }
+
+  if (body.linkDocumentId) {
+    await db.insert(documentPurchaseLinks).values({
+      documentId: body.linkDocumentId,
+      purchaseId: id,
+      relationKind: "primary",
+      linkedBy: "manual",
+      createdByMemberId: auth.memberId,
+    });
   }
 
   return c.json({ ok: true, id }, 201);
