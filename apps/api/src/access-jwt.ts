@@ -65,6 +65,11 @@ export function resolveIdentityFromPayload(payload: JWTPayload): VerifiedAccessI
     const mapped = COMMON_NAME_ALLOWLIST[payload.common_name];
     if (mapped) return mapped;
   }
+  // 暫時除錯 log(2026-09-16,見 CODE_TASK_whoami-null-identity-bug_20260916.md)——JWT 簽章
+  // 驗證通過了,但 email/common_name 都對不上白名單,把實際看到的 common_name 印出來,
+  // 才知道要在 COMMON_NAME_ALLOWLIST 填什麼值(有可能不是 Client ID 本身,是 Zero Trust
+  // 後台幫這個 Service Token 取的名字)。定位根因後移除這行。
+  console.error("[access-jwt] resolveIdentityFromPayload: no email, common_name unmatched:", payload.common_name);
   return null;
 }
 
@@ -76,7 +81,12 @@ export function resolveIdentityFromPayload(payload: JWTPayload): VerifiedAccessI
  */
 export async function verifyAccessJwt(headers: Headers): Promise<VerifiedAccessIdentity | null> {
   const token = headers.get("Cf-Access-Jwt-Assertion");
-  if (!token) return null;
+  if (!token) {
+    // 暫時除錯 log(見上方 resolveIdentityFromPayload 的除錯 log 註解,同一個任務)——確認
+    // 請求到底有沒有帶這個 header,排除「Access 邊緣根本沒把 JWT 夾帶過來」這個可能性。
+    console.error("[access-jwt] verifyAccessJwt: missing Cf-Access-Jwt-Assertion header");
+    return null;
+  }
 
   try {
     const { payload } = await jwtVerify(token, JWKS, {
@@ -84,8 +94,11 @@ export async function verifyAccessJwt(headers: Headers): Promise<VerifiedAccessI
       audience: ACCESS_APP_AUD,
     });
     return resolveIdentityFromPayload(payload);
-  } catch {
-    // 簽章不對、過期、issuer 不符都會丟到這裡——不要把細節回傳給呼叫端,一律當未登入。
+  } catch (err) {
+    // 暫時除錯 log——簽章不對、過期、issuer/audience 不符都會丟到這裡,印出實際錯誤訊息
+    // 才能分辨是哪一種(JWKS 抓取失敗?audience 不符?issuer 不符?)。定位根因後移除,
+    // 正常情況下這裡不回傳任何細節給呼叫端(見下面的 return null),只是暫時多印 log。
+    console.error("[access-jwt] verifyAccessJwt: jwtVerify failed:", err);
     return null;
   }
 }
