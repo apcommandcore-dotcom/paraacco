@@ -29,10 +29,14 @@ npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0001_doc
 npx wrangler d1 execute paraacco-db --remote --file=./migrations/seed.sql
 npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0002_entities_seed.sql
 npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0003_system_batch_member_seed.sql
+npx wrangler d1 execute paraacco-db --remote --file=./migrations-manual/0004_browse_categories_vendors_seed.sql
 ```
 
 建議順序:`0000_*.sql`(建表)→ `migrations-manual/0001_document_fts.sql`(全文檢索表)→
 `seed.sql`(members 初始資料)→ `migrations-manual/0002_entities_seed.sql`(entities 初始資料,
 2026-09-13 財務文件自動分類架構新增)→
 `migrations-manual/0003_system_batch_member_seed.sql`(批次進件系統帳號,2026-09-14 新增,
-email 要跟 `apps/api/src/access-jwt.ts` 的 `COMMON_NAME_ALLOWLIST` 對得起來)。
+email 要跟 `apps/api/src/access-jwt.ts` 的 `COMMON_NAME_ALLOWLIST` 對得起來)→
+`migrations-manual/0004_browse_categories_vendors_seed.sql`(依標題瀏覽的 categories/vendors
+初始資料,2026-09-16 新增,持續累加——Track 1 backlog 每確認一批新的 vendor/category 就補
+下一份 seed 檔,不要回頭改已經套用過的檔案)。

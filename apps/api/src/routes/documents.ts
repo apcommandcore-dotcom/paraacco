@@ -33,9 +33,13 @@ documentsRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const status = c.req.query("status");
   const ownership = c.req.query("ownership");
-  const conditions = [status ? eq(documents.status, status) : undefined, ownership ? eq(documents.ownership, ownership) : undefined].filter(
-    (v) => v !== undefined,
-  );
+  // vendorId 篩選 —— 2026-09-16「依標題瀏覽」入口新增,見架構文件第 1 節。
+  const vendorId = c.req.query("vendorId");
+  const conditions = [
+    status ? eq(documents.status, status) : undefined,
+    ownership ? eq(documents.ownership, ownership) : undefined,
+    vendorId ? eq(documents.vendorId, vendorId) : undefined,
+  ].filter((v) => v !== undefined);
   const rows = conditions.length
     ? await db
         .select()

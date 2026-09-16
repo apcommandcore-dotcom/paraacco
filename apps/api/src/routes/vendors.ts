@@ -8,9 +8,14 @@ import { canWrite } from "../middleware/auth";
 
 export const vendorsRoute = new Hono<{ Bindings: Bindings }>();
 
+// categoryId 篩選 —— 2026-09-16「依標題瀏覽」入口新增(架構文件:分類→供應商兩層瀏覽,
+// 見 paraacco-browse-by-title-design-evaluation-20260916.md 第 1 節)。
 vendorsRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
-  const rows = await db.select().from(vendors);
+  const categoryId = c.req.query("categoryId");
+  const rows = categoryId
+    ? await db.select().from(vendors).where(eq(vendors.defaultCategoryId, categoryId))
+    : await db.select().from(vendors);
   const aliasRows = await db.select().from(vendorAliases);
   const withAliases = rows.map((v) => ({
     ...v,

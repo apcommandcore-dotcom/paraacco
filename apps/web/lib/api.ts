@@ -291,6 +291,57 @@ export interface StatementLineRow {
   matchedPurchaseVendor: string | null;
 }
 
+// 依標題瀏覽(2026-09-16,見 paraacco-browse-by-title-design-evaluation-20260916.md)——
+// 分類 → 供應商兩層,category/vendor 本身不是新概念,既有 schema 早就有,這裡補前端型別。
+export interface CategoryRow {
+  id: string;
+  ownershipScope: string;
+  parentId: string | null;
+  name: string;
+}
+
+export interface VendorRow {
+  id: string;
+  name: string;
+  taxId: string | null;
+  defaultOwnership: string;
+  defaultCategoryId: string | null;
+  aliases: string[];
+}
+
+// 同一案件關聯文件(document_case_links)—— 見 packages/db/src/schema.ts 的
+// documentCaseLinks 表定義註解。
+export interface CaseLinkDocument {
+  caseId: string;
+  documentId: string;
+  role: string;
+  linkedBy: string;
+  docTypeCode: string | null;
+  vendorNameRaw: string | null;
+  docDate: string | null;
+  status: string;
+}
+
+export interface CaseGroup {
+  caseId: string;
+  documents: CaseLinkDocument[];
+}
+
+export const CASE_LINK_ROLE_LABELS: Record<string, string> = {
+  payment: "繳費單",
+  reminder: "催繳(基數)",
+  penalty: "催繳(滯納金)",
+  enforcement: "行政執行",
+  receipt: "收據",
+  INV: "發票",
+  WAR: "保證書",
+  RET: "收據",
+  DEL: "出貨單",
+  ORD: "訂單",
+  SUB: "訂閱/帳單",
+  MAN: "說明書",
+};
+
 export const DOC_STATUS_LABELS: Record<DocumentStatus, string> = {
   queued: "已排入",
   validating: "驗證中",

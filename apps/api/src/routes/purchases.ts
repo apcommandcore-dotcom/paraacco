@@ -20,11 +20,14 @@ purchasesRoute.get("/", async (c) => {
   const ownership = c.req.query("ownership");
   const entityId = c.req.query("entityId");
   const projectId = c.req.query("projectId");
+  // vendorId 篩選 —— 2026-09-16「依標題瀏覽」入口新增,見架構文件第 1 節。
+  const vendorId = c.req.query("vendorId");
   const conditions = [
     status ? eq(purchases.status, status) : undefined,
     ownership ? eq(purchases.ownership, ownership) : undefined,
     entityId ? eq(purchases.entityId, entityId) : undefined,
     projectId ? eq(purchases.projectId, projectId) : undefined,
+    vendorId ? eq(purchases.vendorId, vendorId) : undefined,
   ].filter((v) => v !== undefined);
   const rows = conditions.length
     ? await db

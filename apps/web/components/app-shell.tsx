@@ -16,9 +16,13 @@ import { apiFetch, OWNERSHIP_LABELS, type CountsResponse, type NotificationItem,
 // 進到 /admin(預設分類樹分頁),5 個子分頁的路由拆分見 app/admin/*/page.tsx,不在側邊欄
 // 各自佔一個項目——側邊欄項目太多會失去「一眼看完」的可讀性,子分頁切換沿用 admin 頁面
 // 自己的分頁列,這點跟設計稿的差異記錄在報告裡。
+// 2026-09-16「依標題瀏覽」新入口——按 CODE_TASK_browse-by-title-open-questions-decision_
+// 20260916.md 第 4 節的順序,先加在既有的購買案/資產/文件庫旁邊,不是取代,等新頁面做完、
+// Theo 實際用過確認可用之後才拿掉那三個舊入口,避免空窗期。
 const NAV = [
   { href: "/inbox", label: "收件匣", en: "INBOX", countKey: "inbox" as const },
   { href: "/review", label: "待覆核", en: "REVIEW QUEUE", countKey: "pendingReview" as const },
+  { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
   { href: "/purchases", label: "購買案", en: "PURCHASES" },
   { href: "/assets", label: "資產", en: "ASSETS" },
   { href: "/documents", label: "文件庫", en: "DOCUMENTS" },
