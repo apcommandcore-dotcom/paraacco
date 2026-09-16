@@ -63,10 +63,26 @@ export interface ProcessingJob {
   currentStage: number;
   stageKey: string;
   status: ProcessingJobStatus;
+  attemptCount: number;
+  maxAttempts: number;
   errorCode: string | null;
   errorMessage: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// 稽核日誌 —— 文件詳情頁「進階／稽核」區用(2026-09-16,v8 設計稿分層對齊)。對應
+// packages/db/src/schema.ts 的 activityLog 表,entityType 固定 'document' 時查這份文件的
+// 歸屬移轉/覆核/匯入紀錄,透過既有的 GET /api/activity?entityType=&entityId= 端點取得
+// (不是新端點)。
+export interface ActivityLogEntry {
+  id: number;
+  entityType: string;
+  entityId: string;
+  kind: string;
+  text: string;
+  actorMemberId: string | null;
+  createdAt: string;
 }
 
 export interface DocumentRow {

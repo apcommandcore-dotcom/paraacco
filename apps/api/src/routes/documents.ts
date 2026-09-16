@@ -79,7 +79,18 @@ documentsRoute.get("/:id", async (c) => {
     db.select().from(documentProcessingJobs).where(eq(documentProcessingJobs.documentId, id)).orderBy(desc(documentProcessingJobs.createdAt)),
   ]);
 
-  return c.json({ document: doc, fields, files, purchaseLinks, assetLinks, processingJob: jobs[0] ?? null });
+  // processingJobs 給文件詳情頁「進階／稽核」區用(2026-09-16,v8 設計稿分層對齊)——
+  // 完整處理歷程(含 retry 次數/失敗原因),不是只有最新一筆;processingJob 保留給列表頁
+  // 沿用的簡化欄位,不拿掉避免動到既有呼叫端。
+  return c.json({
+    document: doc,
+    fields,
+    files,
+    purchaseLinks,
+    assetLinks,
+    processingJob: jobs[0] ?? null,
+    processingJobs: jobs,
+  });
 });
 
 // 待覆核工作台中欄要顯示原始檔案(PDF/圖片)——直接把 R2 物件內容串流回來,不给前端另外處理

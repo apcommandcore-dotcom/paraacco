@@ -33,6 +33,8 @@ import {
   type OwnershipScope,
   type WarrantyItem,
   type WarrantyStatus,
+  type ProcessingJob,
+  type ActivityLogEntry,
 } from "@/lib/api";
 import { uploadDocument } from "@/lib/upload";
 
@@ -54,6 +56,22 @@ function warrantyStatusVariant(status: WarrantyStatus): "success" | "warning" | 
   if (status === "expired") return "destructive";
   if (status === "due_soon") return "warning";
   return "success";
+}
+
+// 信心分數分級(規格 2.9):≥90 綠、60–89 黃、<60 紅。「進階／稽核」區的 OCR 信心分數/處理
+// 歷程共用這組配色,跟畫面上其他信心分數顯示(例如待覆核工作台)保持一致。
+function confidenceVariant(conf: number | null): "success" | "warning" | "destructive" | "outline" {
+  if (conf == null) return "outline";
+  if (conf >= 90) return "success";
+  if (conf >= 60) return "warning";
+  return "destructive";
+}
+
+function jobStatusVariant(status: string): "default" | "warning" | "destructive" | "success" | "outline" {
+  if (status === "failed") return "destructive";
+  if (status === "retry" || status === "running" || status === "waiting_review") return "warning";
+  if (status === "completed") return "success";
+  return "outline";
 }
 
 function DocumentsRoot() {
@@ -103,6 +121,7 @@ interface DocumentDetail {
   files: DocumentFile[];
   purchaseLinks: (LinkRow & { purchaseId: string })[];
   assetLinks: (LinkRow & { assetId: string })[];
+  processingJobs: ProcessingJob[];
 }
 
 function DocumentsView({
@@ -121,6 +140,10 @@ function DocumentsView({
   const [query, setQuery] = useState(initialQuery);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 「進階／稽核」收合區(2026-09-16,v8 設計稿分層對齊)—— 預設收起,只顯示結論;稽核日誌
+  // 是額外一次 API 呼叫,故意等使用者真的展開才抓,不是每次開文件就打。
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [activity, setActivity] = useState<ActivityLogEntry[] | null>(null);
 
   // 依側邊欄範圍切換器篩選(2026-09-07 補完設計落差任務書任務 2)。
   const load = useCallback(async () => {
@@ -151,10 +174,19 @@ function DocumentsView({
       setDetail(null);
       return;
     }
+    setAuditOpen(false);
+    setActivity(null);
     apiFetch<DocumentDetail>(`/api/documents/${selectedId}`)
       .then(setDetail)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!auditOpen || !selectedId || activity !== null) return;
+    apiFetch<{ activity: ActivityLogEntry[] }>(`/api/activity?entityType=document&entityId=${selectedId}`)
+      .then((data) => setActivity(data.activity))
+      .catch(() => setActivity([]));
+  }, [auditOpen, selectedId, activity]);
 
   const filtered = (documents ?? []).filter((doc) => {
     if (!query.trim()) return true;
@@ -285,6 +317,98 @@ function DocumentsView({
                 </ul>
               </section>
             )}
+
+            {/* 進階／稽核 —— 2026-09-16,依 v8 設計稿分層對齊:預設只顯示上面的結論(狀態／
+                擷取欄位／檔案／關聯),OCR 信心分數逐欄拆解、完整處理歷程、稽核日誌這些深度
+                除錯資訊收進這個展開區,不跟結論一起攤開(對照 DESIGN_REVIEW_...v7 第 2 節 /
+                DESIGN_REVIEW_...v8 額外確認項目)。 */}
+            <section className="border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => setAuditOpen((v) => !v)}
+                className="text-xs font-semibold uppercase tracking-widest text-muted-foreground hover:text-foreground"
+              >
+                {auditOpen ? "收起進階明細 −" : "展開進階明細 ＋"}
+              </button>
+
+              {auditOpen && (
+                <div className="mt-3 space-y-5">
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      OCR 信心分數與來源
+                    </h4>
+                    <table className="w-full">
+                      <tbody>
+                        {detail.fields.map((f) => (
+                          <tr key={`conf-${f.id}`} className="border-b border-border last:border-0">
+                            <td className="w-1/4 py-1.5 pr-3 text-xs text-muted-foreground">{f.label}</td>
+                            <td className="py-1.5">
+                              <Badge variant={confidenceVariant(f.confidence)}>
+                                {f.confidence != null ? `${f.confidence}%` : "—"}
+                              </Badge>
+                              {f.isUserConfirmed && (
+                                <span className="ml-2 text-xs text-muted-foreground">人工確認</span>
+                              )}
+                            </td>
+                            <td className="py-1.5 text-xs text-muted-foreground">
+                              {f.extractionSource}
+                              {f.sourceNote ? `・${f.sourceNote}` : ""}
+                            </td>
+                          </tr>
+                        ))}
+                        {detail.fields.length === 0 && (
+                          <tr>
+                            <td className="py-2 text-xs text-muted-foreground">沒有擷取欄位可拆解。</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      處理歷程
+                    </h4>
+                    <ul className="space-y-1.5 text-xs">
+                      {detail.processingJobs.map((job) => (
+                        <li key={job.id} className="flex flex-wrap items-center gap-2">
+                          <Badge variant={jobStatusVariant(job.status)}>
+                            {STAGE_LABELS[job.stageKey] ?? job.stageKey}
+                          </Badge>
+                          <span className="text-muted-foreground">
+                            第 {job.attemptCount}/{job.maxAttempts} 次嘗試・{new Date(job.createdAt).toLocaleString("zh-TW")}
+                          </span>
+                          {job.errorMessage && <span className="text-destructive">{job.errorMessage}</span>}
+                        </li>
+                      ))}
+                      {detail.processingJobs.length === 0 && (
+                        <li className="text-muted-foreground">沒有處理紀錄。</li>
+                      )}
+                    </ul>
+                  </div>
+
+                  <div>
+                    <h4 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+                      稽核日誌
+                    </h4>
+                    {activity === null && <div className="text-xs text-muted-foreground">載入中…</div>}
+                    {activity !== null && activity.length === 0 && (
+                      <div className="text-xs text-muted-foreground">沒有稽核紀錄。</div>
+                    )}
+                    {activity !== null && activity.length > 0 && (
+                      <ul className="space-y-1.5 text-xs">
+                        {activity.map((a) => (
+                          <li key={a.id} className="flex flex-wrap items-center gap-2">
+                            <span className="text-muted-foreground">{new Date(a.createdAt).toLocaleString("zh-TW")}</span>
+                            <span>{a.text}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
         )}
       </Drawer>
