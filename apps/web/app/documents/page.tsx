@@ -240,14 +240,16 @@ function DocumentsView({
               <TableBody>
                 {filtered.map((doc) => (
                   <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
-                    <TableCell className="font-mono text-xs">{doc.id}</TableCell>
-                    <TableCell>{doc.vendorNameRaw ?? "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{doc.invoiceNo ?? "—"}</TableCell>
-                    <TableCell>{doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{doc.id}</TableCell>
+                    <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{doc.invoiceNo ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -586,16 +588,16 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
               <TableBody>
                 {purchases.map((p) => (
                   <TableRow key={p.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=purchase&id=${p.id}`)}>
-                    <TableCell className="font-mono text-xs">{p.id}</TableCell>
-                    <TableCell>{p.vendorNameRaw}</TableCell>
-                    <TableCell className="truncate">{p.summary}</TableCell>
-                    <TableCell>{p.currency} {(p.amountCents / 100).toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{entities.find((en) => en.id === p.entityId)?.name ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{projects.find((pr) => pr.id === p.projectId)?.name ?? "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{p.id}</TableCell>
+                    <TableCell className="max-w-[160px] truncate">{p.vendorNameRaw}</TableCell>
+                    <TableCell className="max-w-[220px] truncate">{p.summary}</TableCell>
+                    <TableCell className="whitespace-nowrap">{p.currency} {(p.amountCents / 100).toFixed(2)}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{entities.find((en) => en.id === p.entityId)?.name ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{projects.find((pr) => pr.id === p.projectId)?.name ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(p.status)}>{p.status}</Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{p.purchaseDate}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{p.purchaseDate}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -1020,19 +1022,19 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
               <TableBody>
                 {assets.map((a) => (
                   <TableRow key={a.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=asset&id=${a.id}`)}>
-                    <TableCell className="font-mono text-xs">{a.id}</TableCell>
-                    <TableCell>{a.name}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[a.ownership as OwnershipScope] ?? a.ownership}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{a.vendorName ?? "—"}</TableCell>
-                    <TableCell>{a.brand ?? "—"}</TableCell>
-                    <TableCell>{a.model ?? "—"}</TableCell>
-                    <TableCell className="font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{a.acquiredDate ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{a.id}</TableCell>
+                    <TableCell className="max-w-[160px] truncate">{a.name}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{OWNERSHIP_LABELS[a.ownership as OwnershipScope] ?? a.ownership}</TableCell>
+                    <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{a.vendorName ?? "—"}</TableCell>
+                    <TableCell className="max-w-[120px] truncate">{a.brand ?? "—"}</TableCell>
+                    <TableCell className="max-w-[120px] truncate">{a.model ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{a.acquiredDate ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                       {a.amountCents != null ? `${a.currency ?? "TWD"} ${(a.amountCents / 100).toLocaleString()}` : "—"}
                     </TableCell>
                     <TableCell className="max-w-[10rem] truncate text-xs text-muted-foreground">{a.note ?? "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(a.status)}>{a.status}</Badge>
                     </TableCell>
                   </TableRow>

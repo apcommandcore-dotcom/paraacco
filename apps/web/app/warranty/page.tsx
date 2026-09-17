@@ -234,11 +234,11 @@ function WarrantyRoot() {
               <TableBody>
                 {displayItems.map((item) => (
                   <TableRow key={item.id}>
-                    <TableCell>{item.name}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{item.type === "warranty" ? "保固" : "訂閱"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{item.vendorName ?? "—"}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{OWNERSHIP_LABELS[item.ownership]}</TableCell>
-                    <TableCell className="font-mono text-xs">{item.endDate}</TableCell>
+                    <TableCell className="max-w-[200px] truncate">{item.name}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{item.type === "warranty" ? "保固" : "訂閱"}</TableCell>
+                    <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{item.vendorName ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{OWNERSHIP_LABELS[item.ownership]}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{item.endDate}</TableCell>
                     <TableCell>
                       <Badge variant={statusVariant(item.status)}>{WARRANTY_STATUS_LABELS[item.status]}</Badge>
                     </TableCell>

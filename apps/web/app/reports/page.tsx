@@ -57,9 +57,9 @@ export default function ReportsPage() {
               <TableBody>
                 {byVendor.map((row) => (
                   <TableRow key={row.vendor}>
-                    <TableCell>{row.vendor}</TableCell>
-                    <TableCell className="font-mono text-xs">{row.count}</TableCell>
-                    <TableCell className="font-mono text-xs">NT${(row.totalCents / 100).toLocaleString()}</TableCell>
+                    <TableCell className="max-w-[220px] truncate">{row.vendor}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{row.count}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">NT${(row.totalCents / 100).toLocaleString()}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

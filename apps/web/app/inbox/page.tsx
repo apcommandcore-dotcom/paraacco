@@ -1,7 +1,9 @@
 "use client";
 
-// 收件匣(規格 3.5.1)—— 拖放上傳 + 處理佇列。8 步驟進度先做簡化版(純文字顯示
-// current_stage/stage_key),不做視覺化進度條。
+// 收件匣(規格 3.5.1)—— 拖放上傳 + 處理佇列。8 步驟進度改成視覺化進度條(2026-09-17,
+// 依 paraacco.dc.html 設計稿的 8 格填色邏輯實作:n < currentStage 的格子填色,失敗時最後
+// 一格改紅色,不是原本純文字 stageKey(status) 的簡化版——純文字版本在供應商名稱較長時會
+// 把整列撐到換行、Pipeline 欄位溢出桌面版表格。
 //
 // 上傳流程(2026-09-06 改成預簽 URL 直傳 R2,見 CODE_TASK_post-golive-hardening_20260905.md
 // 任務 2):POST /api/uploads/presign 拿簽好的 URL → 瀏覽器直接 PUT 到 R2(用 XHR 而不是
@@ -239,21 +241,30 @@ export default function InboxPage() {
               <TableBody>
                 {documents.slice(0, 30).map((doc) => (
                   <TableRow key={doc.id}>
-                    <TableCell className="font-mono text-xs">{doc.id}</TableCell>
-                    <TableCell>{doc.vendorNameRaw ?? "—"}</TableCell>
-                    <TableCell>{doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}</TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{doc.id}</TableCell>
+                    <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-muted-foreground">
-                      {doc.processingJob
-                        ? `${STAGE_LABELS[doc.processingJob.stageKey] ?? doc.processingJob.stageKey}（${doc.processingJob.status}）`
-                        : "—"}
+                    <TableCell className="min-w-[160px]">
+                      {doc.processingJob ? (
+                        <PipelineProgress stage={doc.processingJob.currentStage} status={doc.processingJob.status} />
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                      {doc.processingJob?.stageKey && (
+                        <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                          {STAGE_LABELS[doc.processingJob.stageKey] ?? doc.processingJob.stageKey}
+                        </div>
+                      )}
                       {doc.processingJob?.errorMessage && (
-                        <div className="mt-1 text-destructive">{doc.processingJob.errorMessage}</div>
+                        <div className="mt-1 text-[11px] text-destructive">{doc.processingJob.errorMessage}</div>
                       )}
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -270,4 +281,27 @@ function statusVariant(status: DocumentRow["status"]): "default" | "warning" | "
   if (status === "review" || status === "retry") return "warning";
   if (status === "archived") return "success";
   return "outline";
+}
+
+// 8 格視覺化進度條 —— 對照 paraacco.dc.html 的填色邏輯:格子索引 < currentStage 才填色,
+// status 為 failed 時最後一格(currentStage 附近)改紅色標示卡在哪一步,其餘格子維持空白
+// 外框,不是一次全部填滿或全部留白。
+function PipelineProgress({ stage, status }: { stage: number; status: string }) {
+  const failed = status === "failed" || status === "retry";
+  return (
+    <div className="flex gap-0.5">
+      {Array.from({ length: 8 }, (_, n) => {
+        const filled = n < stage;
+        const isFailingStep = failed && n >= stage - 1 && filled;
+        return (
+          <span
+            key={n}
+            className={`h-1.5 flex-1 ${
+              isFailingStep ? "bg-destructive" : filled ? "bg-primary" : "border border-border bg-transparent"
+            }`}
+          />
+        );
+      })}
+    </div>
+  );
 }

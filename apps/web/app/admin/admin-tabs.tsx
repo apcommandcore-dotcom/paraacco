@@ -94,10 +94,10 @@ export function VendorsTab() {
             <TableBody>
               {vendors.map((v) => (
                 <TableRow key={v.id}>
-                  <TableCell>{v.name}</TableCell>
-                  <TableCell className="font-mono text-xs">{v.taxId ?? "—"}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{v.defaultOwnership}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{v.aliases.join("、") || "—"}</TableCell>
+                  <TableCell className="max-w-[200px] truncate">{v.name}</TableCell>
+                  <TableCell className="whitespace-nowrap font-mono text-xs">{v.taxId ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{v.defaultOwnership}</TableCell>
+                  <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground">{v.aliases.join("、") || "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -292,7 +292,7 @@ export function TransfersTab() {
             <TableBody>
               {transfers.map((t) => (
                 <TableRow key={t.id}>
-                  <TableCell className="font-mono text-xs">{t.id}</TableCell>
+                  <TableCell className="whitespace-nowrap font-mono text-xs">{t.id}</TableCell>
                   <TableCell className="font-mono text-xs">
                     {t.targetType === "purchase" ? "採購案" : "資產"} {t.targetId}
                   </TableCell>
@@ -370,11 +370,11 @@ export function MembersTab() {
             <TableBody>
               {members.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell>{m.name}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{m.email}</TableCell>
-                  <TableCell className="text-xs">{m.role}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{m.scope}</TableCell>
-                  <TableCell className="text-xs">{m.status}</TableCell>
+                  <TableCell className="whitespace-nowrap">{m.name}</TableCell>
+                  <TableCell className="max-w-[220px] truncate text-xs text-muted-foreground">{m.email}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">{m.role}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{m.scope}</TableCell>
+                  <TableCell className="whitespace-nowrap text-xs">{m.status}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
