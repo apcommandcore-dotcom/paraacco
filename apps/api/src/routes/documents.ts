@@ -280,6 +280,39 @@ documentsRoute.post("/:id/status", async (c) => {
   return c.json({ ok: true });
 });
 
+// 文件顯示名稱編輯(2026-09-18,對應 CODE_TASK_flexible-item-object-model_20260916.md
+// 「標題可編輯」的前端/API 這一半)—— documents.display_name 欄位 2026-09-13 就已經在
+// schema 裡(見 packages/db/src/schema.ts),但之前沒有任何路由讀寫過,這裡補上。純粹是
+// 「使用者可以手動改文件顯示名稱」這個功能本身,不是「OCR 自動判讀出品名當預設值」——那個
+// 需要 Gemini 擷取 prompt(packages/ocr/src/extraction-prompt.ts)加一個新欄位、
+// document-worker Workflow 歸檔時寫回 display_name,屬於 pipeline 改動,還沒做,見另外
+// 交接的 CODE_TASK。這裡先讓「有 displayName 就顯示、可以手動編輯、editable」這條路徑通。
+documentsRoute.post("/:id/display-name", async (c) => {
+  const auth = c.get("auth");
+  if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
+
+  const id = c.req.param("id");
+  const body = await c.req.json<{ displayName?: string | null }>().catch(() => ({}) as { displayName?: string | null });
+  const raw = typeof body.displayName === "string" ? body.displayName.trim() : "";
+  const displayName = raw ? raw.slice(0, 200) : null;
+
+  const db = createDb(c.env.DB);
+  const [existing] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+  if (!existing) return c.json({ error: "not found" }, 404);
+
+  await db.update(documents).set({ displayName, updatedAt: new Date().toISOString() }).where(eq(documents.id, id));
+
+  await db.insert(activityLog).values({
+    entityType: "document",
+    entityId: id,
+    kind: "review",
+    text: `${auth.name ?? auth.email ?? "系統"} 修改文件顯示名稱為「${displayName ?? "(清空)"}」`,
+    actorMemberId: auth.memberId,
+  });
+
+  return c.json({ ok: true, displayName });
+});
+
 // 失敗文件重新排入佇列(document_processing_jobs.status='failed' 的補救操作)。
 documentsRoute.post("/:id/retry", async (c) => {
   const auth = c.get("auth");

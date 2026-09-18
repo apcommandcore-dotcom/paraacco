@@ -1,12 +1,15 @@
 "use client";
 
-// 文件列表 + 詳情 Drawer(規格 3.2、3.3)—— 三種 view(依文件/依購買案/依資產)切換,
-// 沿用同一套 Drawer 詳情互動模式。依購買案/依資產的 Drawer 目前只顯示該筆記錄自己的欄位,
-// 沒有反查關聯了哪些文件(現有 API 沒有提供這個反查端點,量體不大先不加,已知還缺)。
+// 清單頁 = 文件列表 + 詳情 Drawer(規格 3.2、3.3)。2026-09-18 拿掉依購買案/依資產兩個
+// 分頁——Theo 明確要求「不需要留購買案和資產等標籤,直接刪掉」,清單只剩單一份文件列表,
+// 不再分三種 view。PurchasesView/AssetsView 兩個元件本體先保留在檔案裡不刪(還有其他地方
+// 可能之後要用同一套邏輯),只是 DocumentsRoot 不再 render 它們、也拿掉切換用的分段按鈕。
+// 舊的 /purchases、/assets 兩個 redirect 路由(見各自 page.tsx)因此會落到單純的文件列表,
+// 不是專屬畫面,先不特別處理——如果之後要澈底清掉再一併調整那兩個 redirect。
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search } from "lucide-react";
+import { Check, Pencil, Search, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
 import { Badge } from "@/components/ui/badge";
@@ -39,11 +42,6 @@ import {
 import { uploadDocument } from "@/lib/upload";
 
 type ViewKind = "document" | "purchase" | "asset";
-const VIEWS: { key: ViewKind; label: string }[] = [
-  { key: "document", label: "依文件" },
-  { key: "purchase", label: "依購買案" },
-  { key: "asset", label: "依資產" },
-];
 
 function statusVariant(status: string): "default" | "warning" | "destructive" | "success" | "outline" {
   if (status === "failed" || status === "rejected" || status === "scrap") return "destructive";
@@ -75,33 +73,13 @@ function jobStatusVariant(status: string): "default" | "warning" | "destructive"
 }
 
 function DocumentsRoot() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const view = (searchParams.get("view") as ViewKind | null) ?? "document";
   const selectedId = searchParams.get("id");
 
   return (
     <AppShell>
       <h1 className="mb-4 text-xl font-semibold tracking-wide">清單</h1>
-      <div className="mb-6 flex gap-2">
-        {VIEWS.map((v) => (
-          <button
-            key={v.key}
-            onClick={() => router.push(`/documents?view=${v.key}`)}
-            className={`border px-3 py-1.5 text-sm ${
-              view === v.key ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground hover:bg-accent"
-            }`}
-          >
-            {v.label}
-          </button>
-        ))}
-      </div>
-
-      {view === "document" && (
-        <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} initialStatus={searchParams.get("status") ?? ""} />
-      )}
-      {view === "purchase" && <PurchasesView selectedId={selectedId} />}
-      {view === "asset" && <AssetsView selectedId={selectedId} />}
+      <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} initialStatus={searchParams.get("status") ?? ""} />
     </AppShell>
   );
 }
@@ -144,6 +122,42 @@ function DocumentsView({
   // 是額外一次 API 呼叫,故意等使用者真的展開才抓,不是每次開文件就打。
   const [auditOpen, setAuditOpen] = useState(false);
   const [activity, setActivity] = useState<ActivityLogEntry[] | null>(null);
+
+  // 文件顯示名稱行內編輯(2026-09-18)—— 清單拿掉購買案/資產分頁後,「文件」欄改成可編輯
+  // 的顯示名稱,不是唯讀 DOC ID。目前 OCR 還沒有寫入 displayName(見 lib/api.ts 型別註解),
+  // 空值時 fallback 顯示供應商名稱或 DOC ID,使用者存過一次之後才會有 displayName。
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const editInputRef = useRef<HTMLInputElement>(null);
+
+  function startEditName(doc: DocumentRow, e: React.MouseEvent) {
+    e.stopPropagation();
+    setEditingId(doc.id);
+    setEditValue(doc.displayName ?? doc.vendorNameRaw ?? "");
+  }
+
+  async function saveEditName(id: string, e?: React.MouseEvent | React.KeyboardEvent) {
+    e?.stopPropagation();
+    setSavingName(true);
+    try {
+      const result = await apiFetch<{ ok: true; displayName: string | null }>(`/api/documents/${id}/display-name`, {
+        method: "POST",
+        body: JSON.stringify({ displayName: editValue }),
+      });
+      setDocuments((prev) => prev?.map((d) => (d.id === id ? { ...d, displayName: result.displayName } : d)) ?? null);
+      setEditingId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  function cancelEditName(e?: React.MouseEvent) {
+    e?.stopPropagation();
+    setEditingId(null);
+  }
 
   // 依側邊欄範圍切換器篩選(2026-09-07 補完設計落差任務書任務 2)。
   const load = useCallback(async () => {
@@ -240,7 +254,48 @@ function DocumentsView({
               <TableBody>
                 {filtered.map((doc) => (
                   <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
-                    <TableCell className="whitespace-nowrap font-mono text-xs">{doc.id}</TableCell>
+                    <TableCell className="max-w-[240px]">
+                      {editingId === doc.id ? (
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            ref={editInputRef}
+                            autoFocus
+                            value={editValue}
+                            onChange={(e) => setEditValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveEditName(doc.id);
+                              if (e.key === "Escape") cancelEditName();
+                            }}
+                            className="h-7 w-full border border-primary bg-background px-1.5 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => saveEditName(doc.id, e)}
+                            disabled={savingName}
+                            className="flex-none text-ok hover:opacity-70"
+                            aria-label="儲存"
+                          >
+                            <Check size={13} />
+                          </button>
+                          <button type="button" onClick={cancelEditName} className="flex-none text-muted-foreground hover:opacity-70" aria-label="取消">
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="group flex items-center gap-1.5">
+                          <span className="truncate text-foreground">{doc.displayName ?? doc.vendorNameRaw ?? doc.id}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => startEditName(doc, e)}
+                            className="flex-none text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground"
+                            aria-label="編輯名稱"
+                          >
+                            <Pencil size={11} />
+                          </button>
+                        </div>
+                      )}
+                      <div className="font-mono text-[10px] text-muted-foreground">{doc.id}</div>
+                    </TableCell>
                     <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap font-mono text-xs">{doc.invoiceNo ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap">

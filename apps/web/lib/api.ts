@@ -102,6 +102,10 @@ export interface DocumentRow {
   vendorNameRaw: string | null;
   vendorId: string | null;
   ocrConfidence: number | null;
+  // 使用者可編輯的顯示名稱(2026-09-18)—— OCR 目前還沒有寫入這欄(見
+  // CODE_TASK_flexible-item-object-model_20260916.md),null 時前端要自己 fallback 顯示
+  // vendorNameRaw 或 id,不能當作一定有值。
+  displayName: string | null;
   createdAt: string;
   updatedAt: string;
   processingJob: ProcessingJob | null;
