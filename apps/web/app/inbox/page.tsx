@@ -12,7 +12,8 @@
 // 2026-09-10 資產欄位對齊任務書任務 3:上傳邏輯本體抽到 @/lib/upload(資產詳情「新增
 // 說明書」共用同一套),這裡改成呼叫共用函式,行為不變。
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { UploadCloud, RefreshCw, AlertTriangle, RotateCcw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
@@ -41,6 +42,7 @@ interface UploadTask {
 }
 
 export default function InboxPage() {
+  const router = useRouter();
   const { scope } = useScope();
   const [ownership, setOwnership] = useState<OwnershipOption>("corp");
   const [isDragging, setIsDragging] = useState(false);
@@ -112,10 +114,25 @@ export default function InboxPage() {
     ? Math.round(tasks.reduce((sum, t) => sum + (t.status === "done" ? 100 : t.status === "error" ? 0 : t.progress), 0) / tasks.length)
     : 0;
 
+  // 處理中心頂部統計磚(2026-09-18,對齊 design「paraacco copy-對齊後台copy.dc.html」
+  // 處理中心畫面的 IN QUEUE/PROCESSING/FAILED/TODAY 四格)—— 純前端從已經抓回來的
+  // documents 陣列算,沒有另外呼叫聚合端點,量體大了再考慮換後端算。
+  const stats = useMemo(() => {
+    const docs = documents ?? [];
+    const today = new Date().toDateString();
+    const inQueue = docs.filter((d) => d.status === "queued").length;
+    const processing = docs.filter((d) =>
+      ["validating", "ocr", "extract", "classifying", "matching", "vendor_check", "retry"].includes(d.status),
+    ).length;
+    const failed = docs.filter((d) => d.status === "failed").length;
+    const archivedToday = docs.filter((d) => d.status === "archived" && new Date(d.createdAt).toDateString() === today).length;
+    return { inQueue, processing, failed, archivedToday };
+  }, [documents]);
+
   return (
     <AppShell>
       <div className="mb-6 flex items-baseline justify-between">
-        <h1 className="text-xl font-semibold tracking-wide">收件匣</h1>
+        <h1 className="text-xl font-semibold tracking-wide">處理中心</h1>
         <Button variant="ghost" size="sm" onClick={loadDocuments}>
           <RefreshCw size={14} className="mr-2" />
           重新整理
@@ -211,6 +228,13 @@ export default function InboxPage() {
         </CardContent>
       </Card>
 
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatTile label="排隊中" en="IN QUEUE" value={stats.inQueue} />
+        <StatTile label="OCR／擷取中" en="PROCESSING" value={stats.processing} />
+        <StatTile label="失敗與等待重試" en="FAILED" value={stats.failed} tone="destructive" />
+        <StatTile label="今日已歸檔" en="TODAY" value={stats.archivedToday} tone="success" />
+      </div>
+
       <Card>
         <CardHeader>
           <CardTitle>處理佇列</CardTitle>
@@ -240,7 +264,11 @@ export default function InboxPage() {
               </TableHeader>
               <TableBody>
                 {documents.slice(0, 30).map((doc) => (
-                  <TableRow key={doc.id}>
+                  <TableRow
+                    key={doc.id}
+                    onClick={() => router.push(`/review?doc=${doc.id}`)}
+                    className="cursor-pointer hover:bg-nav-sub"
+                  >
                     <TableCell className="whitespace-nowrap font-mono text-xs">{doc.id}</TableCell>
                     <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap">
@@ -286,6 +314,32 @@ function statusVariant(status: DocumentRow["status"]): "default" | "warning" | "
 // 8 格視覺化進度條 —— 對照 paraacco.dc.html 的填色邏輯:格子索引 < currentStage 才填色,
 // status 為 failed 時最後一格(currentStage 附近)改紅色標示卡在哪一步,其餘格子維持空白
 // 外框,不是一次全部填滿或全部留白。
+function StatTile({
+  label,
+  en,
+  value,
+  tone,
+}: {
+  label: string;
+  en: string;
+  value: number;
+  tone?: "destructive" | "success";
+}) {
+  return (
+    <div className="border border-line bg-surface px-4 py-3">
+      <div className="font-mono text-[10px] tracking-[0.12em] text-foreground-3">{en}</div>
+      <div
+        className={`mt-1 text-2xl font-bold ${
+          tone === "destructive" && value > 0 ? "text-destructive" : tone === "success" ? "text-ok" : "text-foreground"
+        }`}
+      >
+        {value}
+      </div>
+      <div className="mt-0.5 text-xs text-foreground-2">{label}</div>
+    </div>
+  );
+}
+
 function PipelineProgress({ stage, status }: { stage: number; status: string }) {
   const failed = status === "failed" || status === "retry";
   return (

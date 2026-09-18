@@ -82,7 +82,7 @@ function DocumentsRoot() {
 
   return (
     <AppShell>
-      <h1 className="mb-4 text-xl font-semibold tracking-wide">文件</h1>
+      <h1 className="mb-4 text-xl font-semibold tracking-wide">清單</h1>
       <div className="mb-6 flex gap-2">
         {VIEWS.map((v) => (
           <button

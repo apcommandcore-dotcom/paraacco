@@ -3,37 +3,35 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, LogOut, Menu, Search, X } from "lucide-react";
+import { Bell, ChevronDown, FileBarChart, LogOut, Menu, MoreHorizontal, Plus, Search, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useScope } from "@/components/scope-context";
 import { apiFetch, OWNERSHIP_LABELS, type CountsResponse, type NotificationItem, type OwnershipScope } from "@/lib/api";
 
-// 2026-09-06 從頂部橫向選單改成側邊欄導覽,比照 Theo 提供的 VaultLink 設計稿
-// (VaultLink.dc.html 的 <aside><nav> 結構,navGroups() 定義的清單)。2026-09-07 補完設計
-// 落差任務書任務 1:購買案/資產補上獨立頂層導覽項目(底層沿用 /documents?view= 的既有邏輯,
-// 只是換了路由跟導覽入口,見 app/purchases/page.tsx、app/assets/page.tsx)。保固與訂閱是
-// 任務 3 的新畫面。管理後台任務 1 要求拆成 5 個獨立畫面,但這裡的導覽只留一個「管理」入口
-// 進到 /admin(預設分類樹分頁),5 個子分頁的路由拆分見 app/admin/*/page.tsx,不在側邊欄
-// 各自佔一個項目——側邊欄項目太多會失去「一眼看完」的可讀性,子分頁切換沿用 admin 頁面
-// 自己的分頁列,這點跟設計稿的差異記錄在報告裡。
-// 2026-09-16「依標題瀏覽」新入口——按 CODE_TASK_browse-by-title-open-questions-decision_
-// 20260916.md 第 4 節的順序,先加在既有的購買案/資產/文件庫旁邊,不是取代,等新頁面做完、
-// Theo 實際用過確認可用之後才拿掉那三個舊入口,避免空窗期。
-const NAV = [
-  { href: "/inbox", label: "收件匣", en: "INBOX", countKey: "inbox" as const },
-  { href: "/review", label: "待覆核", en: "REVIEW QUEUE", countKey: "pendingReview" as const },
-  { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
-  { href: "/purchases", label: "購買案", en: "PURCHASES" },
-  { href: "/assets", label: "資產", en: "ASSETS" },
-  { href: "/documents", label: "文件庫", en: "DOCUMENTS" },
-  { href: "/warranty", label: "保固與訂閱", en: "COVERAGE" },
-  { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
+// 2026-09-18 從左側側邊欄改成頂部橫向 3 分頁導覽,比照 Theo 提供的
+// 「paraacco copy-對齊後台copy.dc.html」design 檔案(總覽/清單/處理中心)。這是 Theo 明確
+// 選的「完整照 design 改成 3 分頁」方案(見 DESIGN_REVIEW_paraacco-design-v8-verification_
+// 20260916.md),取代 2026-09-06 建立的側邊欄版本。
+//
+// design 這份 3 分頁的頂層導覽本身沒有列出「依標題瀏覽／對帳／保固與訂閱／管理後台」四個
+// 項目——但這幾個畫面(尤其依標題瀏覽、對帳)是這個 session 才剛做完、Theo 實際確認能動的
+// 功能,不能因為新 IA 沒畫出來就悄悄拿掉。做法:這四項收進右上角「更多」選單(MORE_LINKS),
+// 不放進主要 3 分頁,但保留一鍵可達——「搜尋」則對應 design 頂欄中央那個指令列風格搜尋框
+// (⌘K 提示,沿用原本就有的 onSearch 邏輯,不是新元件),「報表」對應右上角 design 標出的
+// 報表按鈕。舊路由(/purchases /assets /browse /warranty /reconciliation /admin /review
+// /search)全部原封不動,只是拿掉了在側邊欄各自佔一格的入口。
+const TABS = [
   { href: "/dashboard", label: "總覽", en: "OVERVIEW" },
-  { href: "/search", label: "搜尋", en: "SEARCH" },
-  { href: "/reports", label: "報表", en: "REPORTS" },
+  { href: "/documents", label: "清單", en: "LIST" },
+  { href: "/inbox", label: "處理中心", en: "PROCESS", countKey: "process" as const },
 ];
 
-const ADMIN_NAV = [{ href: "/admin", label: "管理後台", en: "ADMIN" }];
+const MORE_LINKS = [
+  { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
+  { href: "/warranty", label: "保固與訂閱", en: "COVERAGE" },
+  { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
+  { href: "/admin", label: "管理後台", en: "ADMIN" },
+];
 
 const SCOPE_OPTIONS: { value: OwnershipScope | null; label: string }[] = [
   { value: null, label: "全部" },
@@ -47,6 +45,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [counts, setCounts] = useState<CountsResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch<CountsResponse>("/api/counts")
+      .then((data) => {
+        if (!cancelled) setCounts(data);
+      })
+      .catch(() => {
+        // 分頁數量徽章抓不到就不顯示,不影響導覽本身能不能用。
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function onSearch(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -54,108 +67,133 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     if (typeof q === "string" && q.trim()) router.push(`/search?q=${encodeURIComponent(q.trim())}`);
   }
 
-  return (
-    <div className="flex h-screen overflow-hidden bg-background text-[14px] leading-relaxed">
-      {/* 手機版側邊欄收合(2026-09-07 補完設計落差任務書任務 1)—— md 以下預設隱藏側邊欄,
-          用左上角選單按鈕開合成覆蓋層;md 以上維持原本固定側邊欄,純 CSS breakpoint,沒有
-          額外的 JS 斷點判斷邏輯。 */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-[248px] flex-none flex-col overflow-hidden border-r border-border bg-nav transition-transform md:static md:z-auto md:translate-x-0 ${
-          mobileNavOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex h-[72px] flex-none items-center justify-between gap-2.5 border-b border-border px-4">
-          <Link href="/" className="flex items-center gap-2.5" onClick={() => setMobileNavOpen(false)}>
-            <div className="h-5 w-5 flex-none bg-brand" />
-            <span className="flex flex-col leading-tight">
-              <span className="text-[15px] font-bold tracking-wide">Paraacco</span>
-              <span className="font-mono text-[9px] tracking-[0.14em] text-foreground-3">ATELIER PARALLEL</span>
-            </span>
-          </Link>
-          <button type="button" onClick={() => setMobileNavOpen(false)} className="text-foreground-3 md:hidden" aria-label="關閉導覽">
-            <X size={16} />
-          </button>
-        </div>
+  const processCount = counts ? counts.inbox + counts.pendingReview : undefined;
 
-        <nav className="flex-1 overflow-y-auto py-1.5">
-          <NavGroup items={NAV} pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
-          <div className="mt-3 border-t border-line px-3 pb-2 pt-3.5 font-mono text-[10px] tracking-[0.12em] text-foreground-3">
-            管理 ADMIN
-          </div>
-          <NavGroup items={ADMIN_NAV} pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
+  return (
+    <div className="flex h-screen flex-col overflow-hidden bg-background text-[14px] leading-relaxed">
+      <header className="flex h-16 flex-none items-center gap-3 border-b border-border bg-nav px-4 md:px-5">
+        <Link href="/dashboard" className="flex flex-none items-center gap-2.5" onClick={() => setMobileNavOpen(false)}>
+          <div className="h-5 w-5 flex-none bg-brand" />
+          <span className="hidden flex-col leading-tight sm:flex">
+            <span className="text-[15px] font-bold tracking-wide">Paraacco</span>
+            <span className="font-mono text-[9px] tracking-[0.14em] text-foreground-3">ATELIER PARALLEL</span>
+          </span>
+        </Link>
+
+        <nav className="hidden flex-none items-center gap-1 md:flex">
+          {TABS.map((tab) => {
+            const active = pathname === tab.href || pathname.startsWith(`${tab.href}/`);
+            const count = tab.countKey === "process" ? processCount : undefined;
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={`flex h-9 items-center gap-1.5 border px-3 text-[13.5px] font-semibold no-underline ${
+                  active
+                    ? "border-brand bg-brand text-on-brand"
+                    : "border-transparent text-foreground-2 hover:border-line hover:bg-nav-sub"
+                }`}
+              >
+                {tab.label}
+                {!!count && (
+                  <span
+                    className={`min-w-[18px] rounded-none px-1 text-center font-mono text-[10px] font-semibold ${
+                      active ? "bg-on-brand text-brand" : "bg-destructive text-white"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
         </nav>
 
-        <div className="flex flex-col border-t border-border">
-          <ThemeToggle variant="row" />
-        </div>
-      </aside>
+        <button
+          type="button"
+          onClick={() => setMobileNavOpen(true)}
+          className="flex-none text-foreground-3 md:hidden"
+          aria-label="開啟導覽"
+        >
+          <Menu size={18} />
+        </button>
 
-      {mobileNavOpen && <div className="fixed inset-0 z-40 bg-black/40 md:hidden" onClick={() => setMobileNavOpen(false)} />}
+        <form onSubmit={onSearch} className="relative min-w-0 max-w-[440px] flex-1">
+          <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-3" />
+          <input
+            name="q"
+            placeholder="搜尋發票號、訂單號、序號、品名、供應商或文件內容"
+            className="h-[34px] w-full border border-line bg-muted pl-8 pr-3 text-[13px] text-foreground placeholder:text-foreground-3 focus-visible:border-border focus-visible:bg-surface focus-visible:outline-none"
+          />
+        </form>
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 flex-none items-center gap-3 border-b border-border bg-surface px-4 md:px-5">
-          <button
-            type="button"
-            onClick={() => setMobileNavOpen(true)}
-            className="flex-none text-foreground-3 md:hidden"
-            aria-label="開啟導覽"
+        <div className="flex flex-none items-center gap-2">
+          <ScopeSwitcher />
+          <Link
+            href="/inbox"
+            className="hidden h-[34px] items-center gap-1.5 border border-transparent bg-brand px-3 text-xs font-semibold text-on-brand no-underline hover:bg-brand-hover lg:flex"
           >
-            <Menu size={18} />
-          </button>
-          <form onSubmit={onSearch} className="relative min-w-0 max-w-[540px] flex-1">
-            <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground-3" />
-            <input
-              name="q"
-              placeholder="搜尋發票號、訂單號、序號、品名、供應商或文件內容"
-              className="h-[34px] w-full border border-line bg-muted pl-8 pr-3 text-[13px] text-foreground placeholder:text-foreground-3 focus-visible:border-border focus-visible:bg-surface focus-visible:outline-none"
-            />
-          </form>
-          <div className="flex flex-none items-center gap-2">
-            <ScopeSwitcher />
-            <NotificationBell />
-            <UserMenu />
+            <Plus size={13} />
+            快速上傳
+          </Link>
+          <Link
+            href="/reports"
+            className="hidden h-[34px] items-center gap-1.5 border border-line bg-surface px-2.5 text-xs text-foreground hover:border-border lg:flex"
+          >
+            <FileBarChart size={13} />
+            報表
+          </Link>
+          <MoreMenu pathname={pathname} />
+          <NotificationBell />
+          <UserMenu />
+        </div>
+      </header>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-surface md:hidden">
+          <div className="flex h-16 flex-none items-center justify-between border-b border-border px-4">
+            <span className="text-[15px] font-bold tracking-wide">Paraacco</span>
+            <button type="button" onClick={() => setMobileNavOpen(false)} className="text-foreground-3" aria-label="關閉導覽">
+              <X size={18} />
+            </button>
           </div>
-        </header>
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          <div className="mx-auto max-w-[1440px] px-6 py-6 md:px-7 md:py-7">{children}</div>
-        </main>
-      </div>
+          <nav className="flex-1 overflow-y-auto py-1.5">
+            <MobileNavGroup items={TABS} pathname={pathname} onNavigate={() => setMobileNavOpen(false)} counts={{ process: processCount }} />
+            <div className="mt-3 border-t border-line px-4 pb-2 pt-3.5 font-mono text-[10px] tracking-[0.12em] text-foreground-3">
+              更多 MORE
+            </div>
+            <MobileNavGroup
+              items={[...MORE_LINKS, { href: "/reports", label: "報表", en: "REPORTS" }, { href: "/search", label: "搜尋", en: "SEARCH" }]}
+              pathname={pathname}
+              onNavigate={() => setMobileNavOpen(false)}
+            />
+          </nav>
+        </div>
+      )}
+
+      <main className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto max-w-[1440px] px-6 py-6 md:px-7 md:py-7">{children}</div>
+      </main>
     </div>
   );
 }
 
-function NavGroup({
+function MobileNavGroup({
   items,
   pathname,
   onNavigate,
+  counts,
 }: {
-  items: { href: string; label: string; en: string; countKey?: "inbox" | "pendingReview" }[];
+  items: { href: string; label: string; en: string }[];
   pathname: string;
   onNavigate: () => void;
+  counts?: Record<string, number | undefined>;
 }) {
-  const [counts, setCounts] = useState<CountsResponse | null>(null);
-
-  useEffect(() => {
-    if (!items.some((i) => i.countKey)) return;
-    let cancelled = false;
-    apiFetch<CountsResponse>("/api/counts")
-      .then((data) => {
-        if (!cancelled) setCounts(data);
-      })
-      .catch(() => {
-        // 側邊欄數量徽章抓不到就不顯示,不影響導覽本身能不能用。
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <div>
       {items.map((item) => {
         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
-        const count = item.countKey ? counts?.[item.countKey] : undefined;
+        const count = counts?.[item.href.replace("/", "")] ?? (item.href === "/inbox" ? counts?.process : undefined);
         return (
           <Link
             key={item.href}
@@ -188,9 +226,55 @@ function NavGroup({
   );
 }
 
-// 範圍切換器(2026-09-07 補完設計落差任務書任務 2)—— 純前端 dropdown,狀態存在
-// ScopeProvider(components/scope-context.tsx),換範圍不會自動重新整理頁面,個別畫面
-// (dashboard/documents/inbox)自己 useScope() 讀目前範圍去打 API。
+// 「更多」選單(2026-09-18)—— 收納這輪 design 3 分頁頂層導覽沒畫出來、但 Theo 之前確認
+// 要保留的四個既有功能入口,見檔案開頭註解。
+function MoreMenu({ pathname }: { pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const active = MORE_LINKS.some((l) => pathname === l.href || pathname.startsWith(`${l.href}/`));
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex h-[34px] w-[34px] items-center justify-center border text-foreground-2 hover:border-border ${
+          active ? "border-brand bg-brand-soft text-brand" : "border-line bg-surface"
+        }`}
+        aria-label="更多功能"
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-[38px] z-40 w-52 border border-border bg-surface">
+            {MORE_LINKS.map((item) => {
+              const itemActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setOpen(false)}
+                  className={`flex items-center justify-between border-b border-line-2 px-3.5 py-2.5 text-xs no-underline last:border-0 hover:bg-nav-sub ${
+                    itemActive ? "font-semibold text-brand" : "text-foreground"
+                  }`}
+                >
+                  <span>{item.label}</span>
+                  <span className="font-mono text-[9px] tracking-[0.1em] text-foreground-3">{item.en}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// 範圍切換器(2026-09-07 補完設計落差任務書任務 2,2026-09-18 從側邊欄 header 搬到頂欄,
+// 邏輯不變)—— 純前端 dropdown,狀態存在 ScopeProvider(components/scope-context.tsx),
+// 換範圍不會自動重新整理頁面,個別畫面(dashboard/documents/inbox)自己 useScope() 讀目前
+// 範圍去打 API。
 function ScopeSwitcher() {
   const { scope, setScope } = useScope();
   const [open, setOpen] = useState(false);
@@ -370,3 +454,6 @@ function UserMenu() {
     </div>
   );
 }
+
+// ADMIN_NAV 舊有側邊欄用不到了(管理後台入口移到 MoreMenu),app/admin/* 各頁面自己的
+// AdminNav(components/admin-nav.tsx)子導覽不受影響,照舊。
