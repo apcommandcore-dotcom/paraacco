@@ -6,7 +6,7 @@
 // 呼叫 OCR provider、把結果丟過來,不自己判斷規則 —— 跟 v1 的分工原則一致。
 
 import { Hono } from "hono";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import {
   activityLog,
   assets,
@@ -183,21 +183,30 @@ internalDocumentsRoute.post("/:id/fields", async (c) => {
 //
 // 2026-09-13 財務文件自動分類新增:額外接 scope/financeDocType/counterparty/
 // classificationConfidence/notes,用 @paraacco/domain 的 classifyDocument() 算出
-// ownership、entityId/projectId 建議、display_name、是否強制送人工覆核。ownership 一律
+// ownership、entityId/projectId 建議、是否強制送人工覆核。ownership 一律
 // 用分類結果覆蓋(批次進件沒有人工在上傳當下指定範圍,見架構文件第 1 節),entityId/
 // projectId 建議不是外鍵直接寫死在 purchases(那張表要等人工在 Review 建立/連結採購案時
 // 才會真的定案),先落地成 document_extracted_fields 的兩列供 Review 畫面顯示「建議
 // entity/project」,呼應既有欄位擷取的呈現方式,不用另外新增 UI 元件類型。
+//
+// 2026-09-18(見 CODE_TASK_document-fields-additions_20260918.md 第 1 節)：
+// documents.display_name 不再用 classifyDocument() 算出的命名規則字串(outcome.displayName,
+// 該函式/欄位保留不動,只是不再接到這裡)——改成「還是 null 時才用這次 OCR 的 itemName
+// 當預設值填入,已經有值(使用者編輯過或先前某次 OCR 已填過)一律不覆蓋」,用 SQL
+// COALESCE 在同一個 UPDATE 裡原子完成,不用先 SELECT 再判斷,也不需要額外的
+// display_name_confirmed 旗標。
 internalDocumentsRoute.post("/:id/classify", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{
     docTypeCode?: string;
     docDate?: string;
+    invoiceDate?: string;
     invoiceNo?: string;
     orderNo?: string;
     serialNo?: string;
     brand?: string;
     model?: string;
+    itemName?: string;
     amountCents?: number;
     currency?: string;
     vendorNameRaw?: string;
@@ -218,12 +227,15 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
     classificationConfidence: body.classificationConfidence,
   });
 
+  const itemNameDefault = body.itemName?.trim() || null;
+
   const db = createDb(c.env.DB);
   await db
     .update(documents)
     .set({
       docTypeCode: body.docTypeCode ?? null,
       docDate: body.docDate ?? null,
+      invoiceDate: body.invoiceDate ?? null,
       invoiceNo: body.invoiceNo ?? null,
       orderNo: body.orderNo ?? null,
       serialNo: body.serialNo ?? null,
@@ -234,7 +246,7 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
       vendorNameRaw: body.vendorNameRaw ?? null,
       ocrConfidence: body.ocrConfidence ?? null,
       ownership: outcome.ownership,
-      displayName: outcome.displayName,
+      displayName: sql`COALESCE(${documents.displayName}, ${itemNameDefault})`,
       updatedAt: new Date().toISOString(),
     })
     .where(eq(documents.id, id));

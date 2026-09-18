@@ -124,8 +124,9 @@ function DocumentsView({
   const [activity, setActivity] = useState<ActivityLogEntry[] | null>(null);
 
   // 文件顯示名稱行內編輯(2026-09-18)—— 清單拿掉購買案/資產分頁後,「文件」欄改成可編輯
-  // 的顯示名稱,不是唯讀 DOC ID。目前 OCR 還沒有寫入 displayName(見 lib/api.ts 型別註解),
-  // 空值時 fallback 顯示供應商名稱或 DOC ID,使用者存過一次之後才會有 displayName。
+  // 的顯示名稱,不是唯讀 DOC ID。OCR 現在會在該欄還是 null 時用品名(itemName)填入預設值
+  // (見 lib/api.ts 型別註解、CODE_TASK_document-fields-additions_20260918.md),但舊文件
+  // 或 OCR 也沒擷取到品名時仍可能是 null,空值時 fallback 顯示供應商名稱或 DOC ID。
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [savingName, setSavingName] = useState(false);
@@ -202,12 +203,11 @@ function DocumentsView({
       .catch(() => setActivity([]));
   }, [auditOpen, selectedId, activity]);
 
-  // 預設排序改成依發票日期(2026-09-18,Theo 要求)—— docDate 目前語意是「單據日期」,
-  // 依 packages/ocr/src/extraction-prompt.ts 現行 prompt,同時出現多個日期時優先取「繳費
-  // 期限」、其次才是「開立日」,對發票(INV)類文件來說不完全等於發票開立日,精確度依賴
-  // CODE_TASK_document-fields-additions_20260918.md 裡請 Code 釐清/新增的專屬「發票日期」
-  // 欄位——這裡先用現有 docDate 做最佳近似值,之後欄位到位再切換。沒有 docDate 的文件排到
-  // 最後面,不是排在最前面(避免空值文件洗版到清單頂端)。
+  // 預設排序依發票日期(2026-09-18,Theo 要求)—— Code 已在
+  // CODE_TASK_document-fields-additions_20260918.md 補上專屬的 invoiceDate 欄位(單純是
+  // 單據開立日,不像 docDate 會被「繳費期限優先」規則影響),這裡改成優先用 invoiceDate,
+  // 只有舊文件或這次 OCR 沒擷取到 invoiceDate 時才 fallback 用 docDate 近似。兩者都沒有的
+  // 文件排到最後面,不是排在最前面(避免空值文件洗版到清單頂端)。
   const filtered = (documents ?? [])
     .filter((doc) => {
       if (!query.trim()) return true;
@@ -219,10 +219,12 @@ function DocumentsView({
       );
     })
     .sort((a, b) => {
-      if (!a.docDate && !b.docDate) return 0;
-      if (!a.docDate) return 1;
-      if (!b.docDate) return -1;
-      return b.docDate.localeCompare(a.docDate);
+      const aDate = a.invoiceDate ?? a.docDate;
+      const bDate = b.invoiceDate ?? b.docDate;
+      if (!aDate && !bDate) return 0;
+      if (!aDate) return 1;
+      if (!bDate) return -1;
+      return bDate.localeCompare(aDate);
     });
 
   return (

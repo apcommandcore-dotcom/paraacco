@@ -282,6 +282,10 @@ export const documents = sqliteTable(
     vendorNameRaw: text("vendor_name_raw"),
     docTypeCode: text("doc_type_code"), // INV/WAR/RET/DEL/ORD/SUB/BIL/MAN,見 @paraacco/shared
     docDate: text("doc_date"),
+    // 單據/發票開立日期(2026-09-18,見 CODE_TASK_document-fields-additions_20260918.md)——
+    // 跟 docDate 並存、不改動 docDate 既有的「多個日期時優先取繳費期限」語意,單純是單據上
+    // 印的開立日,供清單「依發票日期排序」使用,可空(還沒重新 OCR 過的舊文件會是 null)。
+    invoiceDate: text("invoice_date"),
     invoiceNo: text("invoice_no"),
     orderNo: text("order_no"),
     serialNo: text("serial_no"),
@@ -292,9 +296,12 @@ export const documents = sqliteTable(
     // 整體信心分數 0-100,由 @paraacco/domain 的 calculateOverallConfidence() 依必要欄位加權算出,
     // 不是 OCR provider 回傳值的直接平均。
     ocrConfidence: real("ocr_confidence"),
-    // Gemini 判讀後依 {日期}_{範圍碼}_{類型碼}_{對象}_{金額} 規則組成的顯示用標籤(2026-09-13
-    // 財務文件自動分類新增)。只是顯示標籤,不會拿去重新命名/搬移 R2 實體物件——schema v2
-    // 刻意讓 R2 key 脫鉤業務關聯,這裡維持不變(見 document_files.r2Key)。
+    // 使用者可編輯的文件顯示標題(2026-09-13 新增欄位,2026-09-18 改變用途——見
+    // CODE_TASK_flexible-item-object-model_20260916.md「標題可編輯」、
+    // CODE_TASK_document-fields-additions_20260918.md 第 1 節)。分類 pipeline(/classify)
+    // 只在這欄還是 null 時,用 OCR 擷取到的 itemName(品名)當預設值填入;已經有值(不論是
+    // 使用者手動編輯過、還是先前某次 OCR 已經填過)一律不覆蓋。不會拿去重新命名/搬移 R2
+    // 實體物件——schema v2 刻意讓 R2 key 脫鉤業務關聯,這裡維持不變(見 document_files.r2Key)。
     displayName: text("display_name"),
     // 'local-scanner-batch'(2026-09-13 新增的每日批次進件來源,見
     // paraacco-code-handoff-package-20260913_3.md 第 5 節)刻意不加進下面的 DB CHECK 約束

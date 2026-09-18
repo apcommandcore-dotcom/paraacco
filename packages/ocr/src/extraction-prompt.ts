@@ -13,6 +13,18 @@ export interface ExtractedDocFields {
   serialNo?: string;
   brand?: string;
   model?: string;
+  // --- 2026-09-18(見 CODE_TASK_document-fields-additions_20260918.md)---
+  /** 這份單據記錄的品項或服務內容,一句話描述,≤30 字,例如「MacBook Pro 14 吋」
+   * 「2026 年 7-8 月電費」「Adobe Creative Cloud 年繳訂閱」——跟 vendorNameRaw/counterparty
+   * (賣方/對象名稱)是不同方向,也不要求跟 brand/model 一樣要有品牌型號才能填,水電/保費/
+   * 訂閱等沒有品牌型號的單據也要能有一句話描述。歸檔時當 documents.display_name 還是 null
+   * 時的預設值,不強制 100% 精準,使用者可另外手動改。查無則為 null。 */
+  itemName?: string;
+  /** 單據/發票開立日期,格式 YYYY-MM-DD,民國年要換算成西元年——跟 docDate 刻意分開:
+   * docDate 現行邏輯是「多個日期同時出現時優先取繳費期限,其次開立日」(對帳單類單據比較
+   * 合理),invoiceDate 單純就是單據上印的開立日/發票日期,不受那條優先順序規則影響,供清單
+   * 「依發票日期排序」使用。跟 paymentDate(實際繳費日期)也是分開的欄位。查無則為 null。 */
+  invoiceDate?: string;
   /** 金額,「元」為單位(不是分),例如 79900 或 79900.5。轉成 amountCents 由呼叫端處理。 */
   amount?: number;
   currency?: string;
@@ -70,6 +82,7 @@ export function buildExtractionPrompt(embeddedText?: string): string {
   "accountNumber": "服務類帳號(水號/電號/瓦斯號/手機門號/寬頻設備碼等),查無則為 null",
   "contractNumber": "合約/保單編號(勞健保等非服務帳號類),查無則為 null,跟 accountNumber 通常只會有其中一個",
   "docDate": "單據日期,格式 YYYY-MM-DD,民國年要換算成西元年。多個日期同時出現時優先取「繳費期限」,其次「開立日」,都沒有則為 null",
+  "invoiceDate": "單據/發票開立日期,格式 YYYY-MM-DD,民國年要換算成西元年,單純是單據上印的開立日/發票日期,不受 docDate「繳費期限優先」規則影響,查無則為 null",
   "paymentDate": "實際繳費日期,格式 YYYY-MM-DD,查無則為 null——跟 docDate 分開記錄,常見單據(例如水費收據)兩者不同,寄發日不等於實際繳費日",
   "billingPeriod": "計費/用水(電)期間,格式 \"YYYY-MM-DD~YYYY-MM-DD\",查無則為 null",
   "invoicePeriod": "發票年月,格式 \"YYYY-MM~MM\"(雙月發票常見,例如 \"2026-03~04\"),查無則為 null",
@@ -78,6 +91,7 @@ export function buildExtractionPrompt(embeddedText?: string): string {
   "serialNo": "商品序號或 IMEI,查無則為 null",
   "brand": "商品品牌,查無則為 null",
   "model": "商品型號,查無則為 null",
+  "itemName": "這份單據記錄的品項或服務內容,一句話描述,≤30 字,例如「MacBook Pro 14 吋」「2026 年 7-8 月電費」「Adobe Creative Cloud 年繳訂閱」,不是供應商/對象名稱,查無則為 null",
   "amount": "總金額數字(元,不含幣別符號、不含千分位逗號),退款/折讓用負數,查無則為 null",
   "currency": "幣別代碼,例如 TWD、USD,查無時預設 TWD",
   "scope": "CORP-AP(平行空間有限公司,含「平行空間室內裝修有限公司」字樣) | CORP-STUDIO(呂劭翊建築師事務所) | PERS(家庭/個人) | PROJ-<專案代碼>(能明確判斷出已知專案代碼時使用) | CORP-PERS(公司/個人跨界,不確定歸屬時用這個,不要用力猜) | 待確認(信心不足/手寫難辨識/無法判斷歸屬)",
@@ -159,6 +173,7 @@ function normalizeFields(obj: Record<string, unknown>): ExtractedDocFields {
     accountNumber: str(obj.accountNumber),
     contractNumber: str(obj.contractNumber),
     docDate: str(obj.docDate),
+    invoiceDate: str(obj.invoiceDate),
     paymentDate: str(obj.paymentDate),
     billingPeriod: str(obj.billingPeriod),
     invoicePeriod: str(obj.invoicePeriod),
@@ -167,6 +182,7 @@ function normalizeFields(obj: Record<string, unknown>): ExtractedDocFields {
     serialNo: str(obj.serialNo),
     brand: str(obj.brand),
     model: str(obj.model),
+    itemName: str(obj.itemName),
     amount: num(obj.amount),
     currency: str(obj.currency) ?? "TWD",
     scope: str(obj.scope),

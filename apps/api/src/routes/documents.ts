@@ -282,11 +282,11 @@ documentsRoute.post("/:id/status", async (c) => {
 
 // 文件顯示名稱編輯(2026-09-18,對應 CODE_TASK_flexible-item-object-model_20260916.md
 // 「標題可編輯」的前端/API 這一半)—— documents.display_name 欄位 2026-09-13 就已經在
-// schema 裡(見 packages/db/src/schema.ts),但之前沒有任何路由讀寫過,這裡補上。純粹是
-// 「使用者可以手動改文件顯示名稱」這個功能本身,不是「OCR 自動判讀出品名當預設值」——那個
-// 需要 Gemini 擷取 prompt(packages/ocr/src/extraction-prompt.ts)加一個新欄位、
-// document-worker Workflow 歸檔時寫回 display_name,屬於 pipeline 改動,還沒做,見另外
-// 交接的 CODE_TASK。這裡先讓「有 displayName 就顯示、可以手動編輯、editable」這條路徑通。
+// schema 裡(見 packages/db/src/schema.ts)。「OCR 自動判讀出品名當預設值」那一半(Gemini
+// 擷取 prompt 新增 itemName 欄位、/internal/documents/:id/classify 只在該欄還是 null 時
+// 寫入)已經在 CODE_TASK_document-fields-additions_20260918.md 補上——這個路由是使用者
+// 手動編輯那一半,兩者共用同一個「已有值不覆蓋」規則(這裡是人工操作,一律直接覆蓋成
+// 使用者輸入的值,不需要額外判斷)。
 documentsRoute.post("/:id/display-name", async (c) => {
   const auth = c.get("auth");
   if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);

@@ -26,11 +26,17 @@ export interface OcrExtractionResult {
   /** 供 classify 用的文件層級摘要欄位(對應 documents 表促升的直欄)。 */
   docTypeCode?: string;
   docDate?: string;
+  /** 單據/發票開立日期,跟 docDate(含「繳費期限優先」混合語意)分開,供依發票日期排序
+   * 使用(2026-09-18,見 CODE_TASK_document-fields-additions_20260918.md)。 */
+  invoiceDate?: string;
   invoiceNo?: string;
   orderNo?: string;
   serialNo?: string;
   brand?: string;
   model?: string;
+  /** 品項/服務內容一句話描述,供 classify 用來填 documents.display_name 的預設值
+   * (只在該欄位還是 null 時,2026-09-18)。 */
+  itemName?: string;
   amountCents?: number;
   currency?: string;
   // --- 2026-09-13 財務文件自動分類新增,供 classify 用(見 @paraacco/domain 的

@@ -54,6 +54,7 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
   push("accountNumber", "服務帳號", parsed.accountNumber);
   push("contractNumber", "合約/保單編號", parsed.contractNumber);
   push("docDate", "日期", parsed.docDate);
+  push("invoiceDate", "發票/開立日期", parsed.invoiceDate);
   push("paymentDate", "繳費日期", parsed.paymentDate);
   push("billingPeriod", "計費期間", parsed.billingPeriod);
   push("invoicePeriod", "發票年月", parsed.invoicePeriod);
@@ -62,6 +63,7 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
   push("serialNo", "序號/IMEI", parsed.serialNo);
   push("brand", "品牌", parsed.brand);
   push("model", "型號", parsed.model);
+  push("itemName", "品名", parsed.itemName);
   push("scope", "分類範圍", parsed.scope);
   push("notes", "備註", parsed.notes);
 
@@ -83,11 +85,13 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
     vendorTaxId: parsed.vendorTaxId,
     docTypeCode: parsed.docTypeCode,
     docDate: parsed.docDate,
+    invoiceDate: parsed.invoiceDate,
     invoiceNo: parsed.invoiceNo,
     orderNo: parsed.orderNo,
     serialNo: parsed.serialNo,
     brand: parsed.brand,
     model: parsed.model,
+    itemName: parsed.itemName,
     amountCents,
     currency: parsed.currency ?? "TWD",
     scope: parsed.scope,

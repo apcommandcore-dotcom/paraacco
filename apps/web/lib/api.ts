@@ -92,6 +92,10 @@ export interface DocumentRow {
   status: DocumentStatus;
   docTypeCode: string | null;
   docDate: string | null;
+  // 單據/發票開立日期(2026-09-18,見 CODE_TASK_document-fields-additions_20260918.md 第 2
+  // 節)—— 跟 docDate 分開,docDate 多日期同時出現時優先取繳費期限,invoiceDate 單純是單據
+  // 開立日,排序請優先用這欄、null 時 fallback 用 docDate(還沒重新 OCR 過的舊文件)。
+  invoiceDate: string | null;
   invoiceNo: string | null;
   orderNo: string | null;
   serialNo: string | null;
@@ -102,9 +106,10 @@ export interface DocumentRow {
   vendorNameRaw: string | null;
   vendorId: string | null;
   ocrConfidence: number | null;
-  // 使用者可編輯的顯示名稱(2026-09-18)—— OCR 目前還沒有寫入這欄(見
-  // CODE_TASK_flexible-item-object-model_20260916.md),null 時前端要自己 fallback 顯示
-  // vendorNameRaw 或 id,不能當作一定有值。
+  // 使用者可編輯的顯示名稱(2026-09-18)—— 分類 pipeline 只在這欄還是 null 時,用 OCR
+  // 擷取到的品名(itemName)當預設值填入(見 CODE_TASK_document-fields-additions_20260918.md
+  // 第 1 節),已經有值不會被覆蓋;null 時前端要自己 fallback 顯示 vendorNameRaw 或 id,
+  // 不能當作一定有值(舊文件、或 OCR 也沒擷取到品名時仍然是 null)。
   displayName: string | null;
   createdAt: string;
   updatedAt: string;
