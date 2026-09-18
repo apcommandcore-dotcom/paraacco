@@ -202,15 +202,28 @@ function DocumentsView({
       .catch(() => setActivity([]));
   }, [auditOpen, selectedId, activity]);
 
-  const filtered = (documents ?? []).filter((doc) => {
-    if (!query.trim()) return true;
-    const q = query.trim().toLowerCase();
-    return (
-      doc.id.toLowerCase().includes(q) ||
-      (doc.vendorNameRaw ?? "").toLowerCase().includes(q) ||
-      (doc.invoiceNo ?? "").toLowerCase().includes(q)
-    );
-  });
+  // 預設排序改成依發票日期(2026-09-18,Theo 要求)—— docDate 目前語意是「單據日期」,
+  // 依 packages/ocr/src/extraction-prompt.ts 現行 prompt,同時出現多個日期時優先取「繳費
+  // 期限」、其次才是「開立日」,對發票(INV)類文件來說不完全等於發票開立日,精確度依賴
+  // CODE_TASK_document-fields-additions_20260918.md 裡請 Code 釐清/新增的專屬「發票日期」
+  // 欄位——這裡先用現有 docDate 做最佳近似值,之後欄位到位再切換。沒有 docDate 的文件排到
+  // 最後面,不是排在最前面(避免空值文件洗版到清單頂端)。
+  const filtered = (documents ?? [])
+    .filter((doc) => {
+      if (!query.trim()) return true;
+      const q = query.trim().toLowerCase();
+      return (
+        doc.id.toLowerCase().includes(q) ||
+        (doc.vendorNameRaw ?? "").toLowerCase().includes(q) ||
+        (doc.invoiceNo ?? "").toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      if (!a.docDate && !b.docDate) return 0;
+      if (!a.docDate) return 1;
+      if (!b.docDate) return -1;
+      return b.docDate.localeCompare(a.docDate);
+    });
 
   return (
     <>
