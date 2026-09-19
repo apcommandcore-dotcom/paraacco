@@ -245,7 +245,9 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
       currency: body.currency ?? "TWD",
       vendorNameRaw: body.vendorNameRaw ?? null,
       ocrConfidence: body.ocrConfidence ?? null,
-      ownership: outcome.ownership,
+      // 呼叫端已確認 ownership(ownership_confirmed)就保留原值,不用 Gemini 判讀結果覆蓋;
+      // entity/project 建議與 forceReview 判斷不受影響。
+      ownership: sql`CASE WHEN ${documents.ownershipConfirmed} THEN ${documents.ownership} ELSE ${outcome.ownership} END`,
       displayName: sql`COALESCE(${documents.displayName}, ${itemNameDefault})`,
       updatedAt: new Date().toISOString(),
     })

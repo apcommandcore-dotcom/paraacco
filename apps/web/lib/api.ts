@@ -88,6 +88,8 @@ export interface ActivityLogEntry {
 export interface DocumentRow {
   id: string;
   ownership: string;
+  // true = 進件時由呼叫端(歷史回填)確認過歸屬,分類階段不會覆蓋(前端目前沒有畫面用到)。
+  ownershipConfirmed: boolean;
   source: string;
   status: DocumentStatus;
   docTypeCode: string | null;

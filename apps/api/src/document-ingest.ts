@@ -11,6 +11,8 @@ export const INGEST_CHANNEL_FIELD_KEY = "ingest_channel";
 
 export interface RegisterDocumentInput {
   ownership: string;
+  /** 呼叫端已確認 ownership(非預設佔位值),分類階段不會覆蓋。省略視為 false。 */
+  ownershipConfirmed?: boolean;
   fileName: string;
   mimeType: string;
   byteSize: number;
@@ -32,6 +34,7 @@ export async function registerDocument(db: Db, queue: Bindings["DOCUMENT_QUEUE"]
   await db.insert(documents).values({
     id,
     ownership: input.ownership,
+    ownershipConfirmed: input.ownershipConfirmed ?? false,
     source: input.source,
     status: "queued",
     createdByMemberId: input.actorMemberId,

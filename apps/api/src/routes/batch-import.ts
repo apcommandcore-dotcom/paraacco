@@ -32,6 +32,8 @@ import { registerDocument } from "../document-ingest";
 
 export const batchImportRoute = new Hono<{ Bindings: Bindings }>();
 
+const OWNERSHIP_VALUES = ["per", "corp", "advance", "custody"] as const;
+
 const MAX_BYTES = 25 * 1024 * 1024; // 跟 routes/uploads.ts 的 MAX_BYTES 一致,單據 PDF/照片綽綽有餘。
 
 // 每日批次進件的來源只有兩種(見架構文件第 4 節):憑證類(掃描機資料夾)、對帳類(NAS 對帳
@@ -46,6 +48,17 @@ batchImportRoute.post("/documents", async (c) => {
   if (typeof file.arrayBuffer !== "function") return c.json({ error: "missing file field" }, 400);
   if (file.size > MAX_BYTES) return c.json({ error: "file too large", maxBytes: MAX_BYTES }, 413);
 
+  // 可選的預標歸屬(歷史回填用,見 CODE_TASK_archive-backfill-ownership-hint_20260918.md)——
+  // 有傳就視為呼叫端已確認,分類階段不覆蓋;沒傳維持原本的 'corp' 佔位、照樣被 Gemini 判讀覆蓋。
+  const ownershipRaw = form.get("ownership");
+  let ownershipHint: (typeof OWNERSHIP_VALUES)[number] | null = null;
+  if (ownershipRaw !== null && ownershipRaw !== "") {
+    if (typeof ownershipRaw !== "string" || !(OWNERSHIP_VALUES as readonly string[]).includes(ownershipRaw)) {
+      return c.json({ error: "invalid ownership", allowed: OWNERSHIP_VALUES }, 400);
+    }
+    ownershipHint = ownershipRaw as (typeof OWNERSHIP_VALUES)[number];
+  }
+
   const bytes = await file.arrayBuffer();
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -59,10 +72,11 @@ batchImportRoute.post("/documents", async (c) => {
 
   const db = createDb(c.env.DB);
   const id = await registerDocument(db, c.env.DOCUMENT_QUEUE, {
-    // 批次進件目前一律先給 'corp' 佔位——階段 5(classifying)會用 Gemini 判讀出的 scope
+    // 沒傳 ownership 時先給 'corp' 佔位——階段 5(classifying)會用 Gemini 判讀出的 scope
     // 覆蓋成正確的 ownership(見 @paraacco/domain 的 classifyDocument()),這裡填什麼只影響
-    // pipeline 跑完之前的短暫顯示,不是最終結果。
-    ownership: "corp",
+    // pipeline 跑完之前的短暫顯示。有傳則標記 ownershipConfirmed,分類階段不覆蓋。
+    ownership: ownershipHint ?? "corp",
+    ownershipConfirmed: ownershipHint !== null,
     fileName: file.name,
     mimeType: file.type || "application/octet-stream",
     byteSize: bytes.byteLength,

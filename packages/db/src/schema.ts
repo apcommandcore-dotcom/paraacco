@@ -278,6 +278,11 @@ export const documents = sqliteTable(
   {
     id: text("id").primaryKey(), // DOC-YYYY-NNNNNN
     ownership: text("ownership").notNull(),
+    // 呼叫端(例如歷史回填腳本,依既有資料夾分類預標)已確認 ownership 時為 true——
+    // /classify 分類階段看到 true 就不用 Gemini 判讀結果覆蓋 ownership,其他欄位照常判讀。
+    // 預設 false:web 上傳、每日 Bookkeeper_Scanner 排程行為不變(見
+    // CODE_TASK_archive-backfill-ownership-hint_20260918.md)。
+    ownershipConfirmed: integer("ownership_confirmed", { mode: "boolean" }).notNull().default(false),
     vendorId: text("vendor_id").references(() => vendors.id),
     vendorNameRaw: text("vendor_name_raw"),
     docTypeCode: text("doc_type_code"), // INV/WAR/RET/DEL/ORD/SUB/BIL/MAN,見 @paraacco/shared

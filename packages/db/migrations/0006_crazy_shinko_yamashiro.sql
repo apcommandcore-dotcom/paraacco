@@ -1,0 +1,1 @@
+ALTER TABLE `documents` ADD `ownership_confirmed` integer DEFAULT false NOT NULL;

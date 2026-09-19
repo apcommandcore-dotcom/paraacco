@@ -43,6 +43,13 @@
       "when": 1789736754443,
       "tag": "0005_abandoned_polaris",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1789777484885,
+      "tag": "0006_crazy_shinko_yamashiro",
+      "breakpoints": true
     }
   ]
 }
