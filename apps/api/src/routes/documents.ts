@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   activityLog,
+  assets,
   createDb,
   documentAssetLinks,
   documentExtractedFields,
@@ -18,6 +19,7 @@ import {
   documentPurchaseLinks,
   documents,
   nextId,
+  purchases,
   relationCandidates,
   syncDocumentFts,
 } from "@paraacco/db";
@@ -71,11 +73,41 @@ documentsRoute.get("/:id", async (c) => {
   const [doc] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
   if (!doc) return c.json({ error: "not_found" }, 404);
 
-  const [fields, files, purchaseLinks, assetLinks, jobs] = await Promise.all([
+  // purchaseLinks/assetLinks 補 join 對應項目的 summary/amountCents/status(2026-09-19,
+  // 「彈性標籤項目」拆項功能——文件詳情頁「關聯」區原本只顯示 purchaseId/assetId 這種內部
+  // ID,使用者看不出這個關聯項目實際是什麼、多少錢,這裡補 join 進去讓 UI 能顯示品名/金額,
+  // 不動 document_purchase_links/document_asset_links 本身的資料,單純多查一次 join。
+  const [fields, files, purchaseLinkRows, assetLinkRows, jobs] = await Promise.all([
     db.select().from(documentExtractedFields).where(eq(documentExtractedFields.documentId, id)).orderBy(documentExtractedFields.sortOrder),
     db.select().from(documentFiles).where(eq(documentFiles.documentId, id)),
-    db.select().from(documentPurchaseLinks).where(eq(documentPurchaseLinks.documentId, id)),
-    db.select().from(documentAssetLinks).where(eq(documentAssetLinks.documentId, id)),
+    db
+      .select({
+        purchaseId: documentPurchaseLinks.purchaseId,
+        relationKind: documentPurchaseLinks.relationKind,
+        linkedBy: documentPurchaseLinks.linkedBy,
+        confidenceScore: documentPurchaseLinks.confidenceScore,
+        summary: purchases.summary,
+        amountCents: purchases.amountCents,
+        currency: purchases.currency,
+        status: purchases.status,
+      })
+      .from(documentPurchaseLinks)
+      .leftJoin(purchases, eq(documentPurchaseLinks.purchaseId, purchases.id))
+      .where(eq(documentPurchaseLinks.documentId, id)),
+    db
+      .select({
+        assetId: documentAssetLinks.assetId,
+        relationKind: documentAssetLinks.relationKind,
+        linkedBy: documentAssetLinks.linkedBy,
+        confidenceScore: documentAssetLinks.confidenceScore,
+        name: assets.name,
+        amountCents: assets.amountCents,
+        currency: assets.currency,
+        status: assets.status,
+      })
+      .from(documentAssetLinks)
+      .leftJoin(assets, eq(documentAssetLinks.assetId, assets.id))
+      .where(eq(documentAssetLinks.documentId, id)),
     db.select().from(documentProcessingJobs).where(eq(documentProcessingJobs.documentId, id)).orderBy(desc(documentProcessingJobs.createdAt)),
   ]);
 
@@ -86,8 +118,8 @@ documentsRoute.get("/:id", async (c) => {
     document: doc,
     fields,
     files,
-    purchaseLinks,
-    assetLinks,
+    purchaseLinks: purchaseLinkRows,
+    assetLinks: assetLinkRows,
     processingJob: jobs[0] ?? null,
     processingJobs: jobs,
   });

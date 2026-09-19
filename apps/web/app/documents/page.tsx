@@ -87,20 +87,45 @@ function DocumentsRoot() {
 // --- 依文件 ---
 
 interface LinkRow {
-  id: number;
   relationKind: string;
   linkedBy: string;
   confidenceScore: number | null;
 }
 
+// purchaseLinks/assetLinks 現在 join 進對應項目的品名/金額/狀態(2026-09-19,「彈性標籤
+// 項目」拆項功能——關聯項目原本只顯示內部 ID,現在補上摘要跟金額才看得出這是什麼)。
+// leftJoin 理論上可能沒對到(項目被刪除的極端情況),summary/name 用 null 保底。
 interface DocumentDetail {
   document: DocumentRow;
   fields: ExtractedField[];
   files: DocumentFile[];
-  purchaseLinks: (LinkRow & { purchaseId: string })[];
-  assetLinks: (LinkRow & { assetId: string })[];
+  purchaseLinks: (LinkRow & {
+    purchaseId: string;
+    summary: string | null;
+    amountCents: number | null;
+    currency: string | null;
+    status: string | null;
+  })[];
+  assetLinks: (LinkRow & {
+    assetId: string;
+    name: string | null;
+    amountCents: number | null;
+    currency: string | null;
+    status: string | null;
+  })[];
   processingJobs: ProcessingJob[];
 }
+
+// 自訂新增項目表單初始值(2026-09-19)—— 品名/金額必填,其他欄位開表單時會用來源文件的
+// ownership/供應商/發票日期預填(使用者可改),不是憑空要求重新輸入一次已經 OCR 過的資訊。
+const EMPTY_ITEM_FORM = {
+  summary: "",
+  amount: "",
+  purchaseDate: "",
+  ownership: "corp" as OwnershipScope,
+  vendorNameRaw: "",
+  tags: "",
+};
 
 function DocumentsView({
   selectedId,
@@ -122,6 +147,14 @@ function DocumentsView({
   // 是額外一次 API 呼叫,故意等使用者真的展開才抓,不是每次開文件就打。
   const [auditOpen, setAuditOpen] = useState(false);
   const [activity, setActivity] = useState<ActivityLogEntry[] | null>(null);
+  // 自訂新增項目(2026-09-19)—— 一張發票可能買了好幾樣不同的東西(例如同時買 Switch 主機、
+  // 健身環套組、遊戲片),需要能把同一份來源文件拆成好幾筆獨立的「項目」,各自有自己的品名/
+  // 金額/標籤,但全部連回同一份文件——後端 POST /api/purchases 的 linkDocumentId 早在
+  // 2026-09-16「彈性標籤項目」模型定案時就支援這個用法(document_purchase_links 本來就是
+  // 多對多),這裡補的是這個 Drawer 裡的新增項目表單,不是新的後端能力。
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM);
+  const [submittingItem, setSubmittingItem] = useState(false);
 
   // 文件顯示名稱行內編輯(2026-09-18)—— 清單拿掉購買案/資產分頁後,「文件」欄改成可編輯
   // 的顯示名稱,不是唯讀 DOC ID。OCR 現在會在該欄還是 null 時用品名(itemName)填入預設值
@@ -184,6 +217,12 @@ function DocumentsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialQuery]);
 
+  const loadDetail = useCallback((id: string) => {
+    apiFetch<DocumentDetail>(`/api/documents/${id}`)
+      .then(setDetail)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
@@ -191,10 +230,38 @@ function DocumentsView({
     }
     setAuditOpen(false);
     setActivity(null);
-    apiFetch<DocumentDetail>(`/api/documents/${selectedId}`)
-      .then(setDetail)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, [selectedId]);
+    setShowItemForm(false);
+    setItemForm(EMPTY_ITEM_FORM);
+    loadDetail(selectedId);
+  }, [selectedId, loadDetail]);
+
+  async function addItem() {
+    if (!detail || !itemForm.summary.trim() || !itemForm.amount) return;
+    setSubmittingItem(true);
+    setError(null);
+    try {
+      await apiFetch("/api/purchases", {
+        method: "POST",
+        body: JSON.stringify({
+          ownership: itemForm.ownership,
+          purchaseDate: itemForm.purchaseDate || new Date().toISOString().slice(0, 10),
+          vendorNameRaw: itemForm.vendorNameRaw.trim() || detail.document.vendorNameRaw || "—",
+          summary: itemForm.summary.trim(),
+          amountCents: Math.round(Number(itemForm.amount) * 100),
+          currency: detail.document.currency ?? "TWD",
+          tags: itemForm.tags.trim() ? itemForm.tags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+          linkDocumentId: detail.document.id,
+        }),
+      });
+      setItemForm(EMPTY_ITEM_FORM);
+      setShowItemForm(false);
+      loadDetail(detail.document.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmittingItem(false);
+    }
+  }
 
   useEffect(() => {
     if (!auditOpen || !selectedId || activity !== null) return;
@@ -376,19 +443,137 @@ function DocumentsView({
               </ul>
             </section>
 
-            {(detail.purchaseLinks.length > 0 || detail.assetLinks.length > 0) && (
-              <section>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">關聯</h3>
+            <section>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">關聯項目</h3>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    if (!showItemForm) {
+                      setItemForm({
+                        ...EMPTY_ITEM_FORM,
+                        ownership: (detail.document.ownership as OwnershipScope) ?? "corp",
+                        vendorNameRaw: detail.document.vendorNameRaw ?? "",
+                        purchaseDate: detail.document.invoiceDate ?? detail.document.docDate ?? "",
+                      });
+                    }
+                    setShowItemForm((v) => !v);
+                  }}
+                >
+                  + 新增項目
+                </Button>
+              </div>
+
+              {/* 一張發票列了好幾樣不同的東西時,可以連續按「新增項目」好幾次,每次填不同的
+                  品名/金額,拆成好幾筆各自獨立的項目,全部連回同一份來源文件——document_
+                  purchase_links 本來就是多對多,不會互相覆蓋(見 CODE_TASK_flexible-item-
+                  object-model_20260916.md)。 */}
+              {showItemForm && (
+                <div className="mb-3 border border-border bg-nav-sub p-3">
+                  <div className="flex flex-wrap items-end gap-3">
+                    <Field label="品名">
+                      <Input
+                        value={itemForm.summary}
+                        onChange={(e) => setItemForm((f) => ({ ...f, summary: e.target.value }))}
+                        placeholder="例:Nintendo Switch 主機"
+                        className="w-48"
+                      />
+                    </Field>
+                    <Field label="金額">
+                      <Input
+                        type="number"
+                        value={itemForm.amount}
+                        onChange={(e) => setItemForm((f) => ({ ...f, amount: e.target.value }))}
+                        className="w-28"
+                      />
+                    </Field>
+                    <Field label="範圍">
+                      <select
+                        value={itemForm.ownership}
+                        onChange={(e) => setItemForm((f) => ({ ...f, ownership: e.target.value as OwnershipScope }))}
+                        className="h-9 border border-input bg-background px-2 text-sm"
+                      >
+                        {(Object.keys(OWNERSHIP_LABELS) as OwnershipScope[]).map((k) => (
+                          <option key={k} value={k}>
+                            {OWNERSHIP_LABELS[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label="供應商">
+                      <Input
+                        value={itemForm.vendorNameRaw}
+                        onChange={(e) => setItemForm((f) => ({ ...f, vendorNameRaw: e.target.value }))}
+                        className="w-36"
+                      />
+                    </Field>
+                    <Field label="採購日期">
+                      <Input
+                        type="date"
+                        value={itemForm.purchaseDate}
+                        onChange={(e) => setItemForm((f) => ({ ...f, purchaseDate: e.target.value }))}
+                        className="w-40"
+                      />
+                    </Field>
+                    <Field label="標籤(選填,逗號分隔)">
+                      <Input
+                        value={itemForm.tags}
+                        onChange={(e) => setItemForm((f) => ({ ...f, tags: e.target.value }))}
+                        placeholder="例:電玩,健身"
+                        className="w-40"
+                      />
+                    </Field>
+                    <Button
+                      size="sm"
+                      disabled={submittingItem || !itemForm.summary.trim() || !itemForm.amount}
+                      onClick={addItem}
+                    >
+                      儲存
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {(detail.purchaseLinks.length > 0 || detail.assetLinks.length > 0) && (
                 <ul className="space-y-1 text-xs">
                   {detail.purchaseLinks.map((l) => (
-                    <li key={`p-${l.id}`}>採購案 {l.purchaseId}({l.relationKind}・{l.linkedBy}）</li>
+                    <li key={`p-${l.purchaseId}`} className="flex items-center justify-between">
+                      <span>
+                        {l.summary ?? l.purchaseId}
+                        <span className="ml-2 text-muted-foreground">
+                          {l.relationKind}・{l.linkedBy}
+                        </span>
+                      </span>
+                      {l.amountCents != null && (
+                        <span className="text-muted-foreground">
+                          {l.currency ?? "TWD"} {(l.amountCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </li>
                   ))}
                   {detail.assetLinks.map((l) => (
-                    <li key={`a-${l.id}`}>資產 {l.assetId}({l.relationKind}・{l.linkedBy}）</li>
+                    <li key={`a-${l.assetId}`} className="flex items-center justify-between">
+                      <span>
+                        {l.name ?? l.assetId}
+                        <span className="ml-2 text-muted-foreground">
+                          {l.relationKind}・{l.linkedBy}
+                        </span>
+                      </span>
+                      {l.amountCents != null && (
+                        <span className="text-muted-foreground">
+                          {l.currency ?? "TWD"} {(l.amountCents / 100).toFixed(2)}
+                        </span>
+                      )}
+                    </li>
                   ))}
                 </ul>
-              </section>
-            )}
+              )}
+
+              {detail.purchaseLinks.length === 0 && detail.assetLinks.length === 0 && !showItemForm && (
+                <p className="text-xs text-muted-foreground">還沒有任何關聯項目。</p>
+              )}
+            </section>
 
             {/* 進階／稽核 —— 2026-09-16,依 v8 設計稿分層對齊:預設只顯示上面的結論(狀態／
                 擷取欄位／檔案／關聯),OCR 信心分數逐欄拆解、完整處理歷程、稽核日誌這些深度
