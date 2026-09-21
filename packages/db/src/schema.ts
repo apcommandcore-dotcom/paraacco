@@ -672,11 +672,24 @@ export const statementLines = sqliteTable(
     matchedPurchaseId: text("matched_purchase_id").references(() => purchases.id),
     matchConfidence: real("match_confidence"), // 0-100,第二輪 Gemini 語意比對時填入
     matchNote: text("match_note"),
+    // 2026-09-21 信用卡明細入庫(方案 B)新增。entity_id 一律 'ap',公司/個人歸屬走 ownership,
+    // 沿用 documents/assets 的同一套值域;2026-09 前未分流者為 'pending',分流後改為其他值。
+    postDate: text("post_date"), // YYYY-MM-DD 入帳日
+    bank: text("bank"),
+    currency: text("currency").default("TWD"),
+    rawLine: text("raw_line"), // pdftotext 原始文字,供人工回查
+    ownership: text("ownership").notNull().default("pending"), // 'pending' | 'per' | 'corp' | 'advance' | 'custody'
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (t) => ({
     entityIdx: index("statement_lines_entity_idx").on(t.entityId),
+    bankIdx: index("statement_lines_bank_idx").on(t.bank),
+    ownershipIdx: index("statement_lines_ownership_idx").on(t.ownership),
+    ownershipCheck: check(
+      "statement_lines_ownership_check",
+      sql`${t.ownership} IN ('pending', 'per', 'corp', 'advance', 'custody')`,
+    ),
     sourceDocIdx: index("statement_lines_source_doc_idx").on(t.sourceDocumentId),
     statusIdx: index("statement_lines_status_idx").on(t.reconciliationStatus),
     matchedPurchaseIdx: index("statement_lines_matched_purchase_idx").on(t.matchedPurchaseId),

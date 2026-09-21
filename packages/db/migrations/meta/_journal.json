@@ -50,6 +50,13 @@
       "when": 1789777484885,
       "tag": "0006_crazy_shinko_yamashiro",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1789956982257,
+      "tag": "0007_cc_statement_lines",
+      "breakpoints": true
     }
   ]
 }
