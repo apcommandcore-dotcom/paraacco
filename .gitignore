@@ -14,3 +14,4 @@ next-env.d.ts
 CODE_REPORT_*.md
 .local-scanner-token
 _snapshots/
+.batch-ingest-dry-run

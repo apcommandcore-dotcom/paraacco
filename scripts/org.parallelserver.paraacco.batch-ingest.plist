@@ -2,25 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key>
-  <string>org.parallelserver.paraacco.batch-ingest</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>/Users/lushaoyi/dev/paraacco/scripts/batch-ingest.sh</string>
-  </array>
-  <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>22</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
-  <key>RunAtLoad</key>
-  <false/>
-  <key>StandardOutPath</key>
-  <string>/Users/lushaoyi/dev/paraacco/logs/launchd.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/lushaoyi/dev/paraacco/logs/launchd.err.log</string>
+	<key>Label</key>
+	<string>org.parallelserver.paraacco.batch-ingest</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/lushaoyi/Applications/ParaaccoBatchIngest.app/Contents/MacOS/applet</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/lushaoyi/dev/paraacco/logs/launchd.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lushaoyi/dev/paraacco/logs/launchd.out.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>22</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
 </dict>
 </plist>

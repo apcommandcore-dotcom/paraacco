@@ -1,5 +1,6 @@
 #!/bin/bash
-# paraacco 每日批次進件 V1.0(2026-09-22)
+# paraacco 每日批次進件 V1.01(2026-09-22)
+# V1.01:列檔失敗(macOS 隱私權限 EPERM)或複製驗證失敗時明確回報失敗,不再「0 筆 + 成功」。
 # Bookkeeper_Scanner → POST acco-api /api/batch-import/documents → 複製到 00_原始文件/<日期>/
 #
 # 驗證三層:Cloudflare Access Service Token(邊緣)→ access-jwt.ts 白名單 → X-Local-Scanner-Token
@@ -9,7 +10,7 @@
 #   LIMIT=N          本次最多處理 N 個新檔案(0 = 不限)
 #   DELETE_SOURCE=1  上傳成功且複製檔 sha256 驗證一致後,刪除原始檔(預設 0 = 不刪)
 # 路徑皆可用同名環境變數覆寫(測試用)。bash 3.2 相容(macOS 內建 /bin/bash)。
-VERSION="V1.0"
+VERSION="V1.01"
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 umask 077
 
@@ -23,6 +24,8 @@ LOG_DIR="${LOG_DIR:-$REPO/logs}"
 API="${API:-https://acco-api.parallelserver.org/api/batch-import/documents}"
 LOCK="${LOCK:-/tmp/paraacco-batch-ingest.lock}"
 DRY_RUN="${DRY_RUN:-0}"; LIMIT="${LIMIT:-0}"; DELETE_SOURCE="${DELETE_SOURCE:-0}"
+# 開關檔:存在時強制試跑(給 launchd 觸發時用,launchd 無法臨時帶環境變數)
+[ -f "$REPO/.batch-ingest-dry-run" ] && DRY_RUN=1
 
 TODAY=$(date +%Y%m%d)
 mkdir -p "$LOG_DIR"
@@ -48,6 +51,8 @@ log "START $VERSION dry_run=$DRY_RUN limit=$LIMIT delete_source=$DELETE_SOURCE"
 [ -f "$CF_ENV" ]     || { log "ABORT MISSING_CF_ENV $CF_ENV"; exit 1; }
 [ -d "$SRC" ]        || { log "ABORT 來源無法存取(未掛載、不存在或無權限): $SRC"; exit 1; }
 [ -d "$DEST_ROOT" ]  || { log "ABORT 目的地無法存取(未掛載、不存在或無權限): $DEST_ROOT"; exit 1; }
+if ! ls "$SRC" >/dev/null 2>"$TMP/ls.err"; then log "ABORT 無權讀取來源(macOS 隱私權限?): $SRC :: $(head -c 200 "$TMP/ls.err" | tr '\n' ' ')"; exit 1; fi
+if ! ls "$DEST_ROOT" >/dev/null 2>"$TMP/ls.err"; then log "ABORT 無權讀取目的地(macOS 隱私權限?): $DEST_ROOT :: $(head -c 200 "$TMP/ls.err" | tr '\n' ' ')"; exit 1; fi
 
 . "$CF_ENV"
 if [ -z "$CF_ACCESS_CLIENT_ID" ] || [ -z "$CF_ACCESS_CLIENT_SECRET" ]; then
@@ -56,8 +61,10 @@ fi
 SCANNER_TOKEN=$(cat "$TOKEN_FILE")
 touch "$MANIFEST"
 
-up=0; skip=0; fail=0; wait=0; n=0
-find "$SRC" -type f \( -iname '*.pdf' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) ! -name '.*' -print0 > "$TMP/list"
+up=0; skip=0; fail=0; wait=0; warn=0; n=0
+if ! find "$SRC" -type f \( -iname '*.pdf' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' \) ! -name '.*' -print0 > "$TMP/list" 2>"$TMP/find.err"; then
+  log "ABORT 列出來源檔案失敗: $(head -c 300 "$TMP/find.err" | tr '\n' ' ')"; exit 1
+fi
 while IFS= read -r -d '' f; do
   if [ "$LIMIT" -gt 0 ] && [ "$n" -ge "$LIMIT" ]; then break; fi
   mt=$(mtime "$f" 2>/dev/null)
@@ -91,9 +98,9 @@ while IFS= read -r -d '' f; do
     log "OK $id $f -> $t"
     if [ "$DELETE_SOURCE" = "1" ]; then rm -f "$f" && log "DEL 已刪除原始檔: $f"; fi
   else
-    log "WARN 已上傳 $id,但複製/驗證失敗,原始檔保留: $f"
+    warn=$((warn+1)); log "WARN 已上傳 $id,但複製/驗證失敗,原始檔保留: $f"
   fi
 done < "$TMP/list"
 
-log "END uploaded=$up skipped=$skip waiting=$wait failed=$fail"
-[ "$fail" -eq 0 ]
+log "END uploaded=$up skipped=$skip waiting=$wait failed=$fail warn=$warn"
+[ "$fail" -eq 0 ] && [ "$warn" -eq 0 ]
