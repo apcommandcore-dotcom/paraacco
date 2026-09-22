@@ -53,8 +53,23 @@ documentsRoute.get("/", async (c) => {
   // 收件匣畫面要顯示 pipeline 進度(8 步驟簡化版:current_stage/stage_key)——一份文件
   // 可能因為 retry 累積多筆 job(見 CODE_REPORT_queue-consumer-fix-retest_20260904.md 的
   // 副作用發現),這裡只取每份文件最新建立的那一筆。
+  //
+  // 2026-09-22 修正:原本用 rows.map(r => r.id) 組一份 ID 清單餵給 inArray,文件一多
+  // (200+ 筆)就超過 D1 單查詢 100 bound params 上限,回 internal_error。改成子查詢重用
+  // 上面同一組篩選條件(and(...conditions)),讓 D1 自己關聯,綁定參數數量只跟篩選條件
+  // 個數成正比,不跟文件筆數成正比。
   const jobs = rows.length
-    ? await db.select().from(documentProcessingJobs).where(inArray(documentProcessingJobs.documentId, rows.map((r) => r.id)))
+    ? await db
+        .select()
+        .from(documentProcessingJobs)
+        .where(
+          inArray(
+            documentProcessingJobs.documentId,
+            conditions.length
+              ? db.select({ id: documents.id }).from(documents).where(and(...conditions))
+              : db.select({ id: documents.id }).from(documents),
+          ),
+        )
     : [];
   const latestJobByDoc = new Map<string, (typeof jobs)[number]>();
   for (const job of jobs) {
