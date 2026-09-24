@@ -38,6 +38,17 @@ class_name = "DocumentProcessingWorkflow"
 [ai]
 binding = "AI"
 
+# 擷取模式開關(2026-09-23,見 CODE_TASK_extraction-writeback-api_20260923.md、
+# CODE_REPORT_extraction-writeback-api-phase2-proposals_20260923.md 提案 2)——
+# 'external':stage-3-ocr 不呼叫 Gemini,只寫入 _ocr_status=awaiting_external_extraction
+#   佔位欄位,等待 apps/api 的 POST /api/extraction-writeback/documents/:id 寫回真實結果。
+# 'gemini':維持現行行為,呼叫 GeminiOcrProvider。
+# 非 'gemini' 的任何值(含未設定/打錯字)一律當成 'external'——刻意設計成「設定壞掉時誤停
+# Gemini,不會誤呼叫 Gemini」的安全方向,避免打錯字意外燒到 Gemini 額度/費用。之後要切回
+# Gemini,只改下面這個值 + 重新部署,不用動程式碼。不是敏感值,用 [vars](不是 secret)。
+[vars]
+EXTRACTION_MODE = "external"
+
 # INTERNAL_SERVICE_TOKEN 用 secret 設定,不寫在這個檔案裡:
 #   npx wrangler secret put INTERNAL_SERVICE_TOKEN
 # 要跟 apps/api 那邊設的值完全一樣。

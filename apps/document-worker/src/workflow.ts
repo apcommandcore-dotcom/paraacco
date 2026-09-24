@@ -10,7 +10,7 @@
 // 結果傳過去、依回傳結果決定下一步——維持「document-worker 不自己判斷業務規則」的分工原則。
 
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
-import { calculateOverallConfidence, type FieldConfidenceInput } from "@paraacco/domain";
+import { calculateOverallConfidence, isExternalExtractionField, type FieldConfidenceInput } from "@paraacco/domain";
 import { GeminiOcrProvider, type OcrExtractionResult, type OcrProvider } from "@paraacco/ocr";
 import type { Bindings, DocumentWorkflowParams } from "./bindings";
 import { callInternal } from "./internal-client";
@@ -21,6 +21,15 @@ import { callInternal } from "./internal-client";
 // 待真實單據測試後再調整。
 function createOcrProvider(env: Bindings): OcrProvider {
   return new GeminiOcrProvider({ apiKey: env.GEMINI_API_KEY });
+}
+
+// EXTRACTION_MODE 開關(2026-09-23,見 CODE_TASK_extraction-writeback-api_20260923.md、
+// CODE_REPORT_extraction-writeback-api-phase2-proposals_20260923.md 提案 2)——
+// 'gemini' 才是「呼叫 Gemini」,其他任何值(含未設定、打錯字)一律當成 'external'。刻意
+// 設計成「設定壞掉時誤停 Gemini,不會誤呼叫 Gemini」的安全方向,避免打錯字意外燒到
+// Gemini 額度/費用。
+function resolveExtractionMode(env: Bindings): "gemini" | "external" {
+  return env.EXTRACTION_MODE === "gemini" ? "gemini" : "external";
 }
 
 interface DocumentFileRow {
@@ -51,6 +60,7 @@ interface ExtractedFieldRow {
   value: string | null;
   confidence: number | null;
   extractionSource: string;
+  sourceNote: string | null;
 }
 
 interface DocumentDetailResponse {
@@ -154,10 +164,14 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           duplicateOfDocumentId = dup.duplicateOfDocumentId;
         }
 
-        // 人工 OCR(md 交接)接回 pipeline:POST /api/documents 建立文件當下如果已經帶了
-        // extractedFields,這裡會先看到 extractionSource: 'user_input' 的欄位 —— 有的話
-        // 階段 3 完全不呼叫 Workers AI,直接用這些欄位組結果(見下方 stage-3-ocr)。
-        const userInputFields = detail.fields.filter((f) => f.extractionSource === "user_input");
+        // 人工 OCR(md 交接)或外部寫回(POST /api/extraction-writeback/documents/:id,見
+        // CODE_TASK_extraction-writeback-api_20260923.md)接回 pipeline:有真的擷取結果的話,
+        // 階段 3 完全不呼叫 Gemini,直接用這些欄位組結果(見下方 stage-3-ocr)。用
+        // isExternalExtractionField()(@paraacco/domain)判斷,不是只看 extractionSource ——
+        // 排除 ingest_channel 之類的系統標記欄位,也排除 pipeline 自己這次/上次跑出來的
+        // ai_inference 欄位(外部寫回一樣標 ai_inference,只能靠 sourceNote 前綴區分,見該
+        // function 的註解)。
+        const userInputFields = detail.fields.filter(isExternalExtractionField);
 
         await logEvent(env, jobId, 2, "validating", "completed", { duplicateOfDocumentId });
         return { original, duplicateOfDocumentId, userInputFields };
@@ -174,9 +188,11 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         return { status: "dup", duplicateOfDocumentId };
       }
 
-      // 階段 3(ocr):優先用人工 OCR(md 交接)的欄位,完全不呼叫 Workers AI;沒有的話才
-      // 照原本邏輯把原始檔案從 R2 讀出來,交給 OCR provider(見
-      // CODE_TASK_manual-ocr-pipeline-integration_20260904.md)。
+      // 階段 3(ocr):優先用人工 OCR(md 交接)/外部寫回的欄位,完全不呼叫 Gemini;都沒有的話
+      // 再看 EXTRACTION_MODE——'external' 時一樣不呼叫 Gemini,只留一筆明確的佔位紀錄,等
+      // 外部寫回;'gemini'(或都不是上述情況)才照原本邏輯把原始檔案從 R2 讀出來,交給 OCR
+      // provider(見 CODE_TASK_manual-ocr-pipeline-integration_20260904.md、
+      // CODE_TASK_extraction-writeback-api_20260923.md)。
       const ocrResult = await step.do("stage-3-ocr", async () => {
         await logEvent(env, jobId, 3, "ocr", "started");
         await updateJob(env, jobId, { currentStage: 3, stageKey: "ocr" });
@@ -184,10 +200,36 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         if (userInputFields.length) {
           const result = fieldsToExtractionResult(userInputFields);
           await logEvent(env, jobId, 3, "ocr", "skipped", {
-            reason: "user_input fields present",
+            reason: "external extraction fields present",
             fieldCount: result.fields.length,
           });
           return result;
+        }
+
+        if (resolveExtractionMode(env) === "external") {
+          // 不讀 R2 檔案、不呼叫 Gemini——現階段擷取由外部進行,雲端不該花 Gemini 額度/費用。
+          // _ocr_status 這個 fieldKey 不是新發明,沿用 @paraacco/ocr 的
+          // unsupportedResult()(packages/ocr/src/shared.ts)已經在用的「沒有真的擷取到、
+          // 需要另外處理」佔位慣例。這個值(awaiting_external_extraction)刻意跟低信心/失敗
+          // 共用同一個 _ocr_status fieldKey 但用不同的固定值,不跟低信心/失敗共用同一個值
+          // ——「待外部擷取」是待處理佇列,「低信心」是待人工判斷佇列,兩者是不同的工作,
+          // 混在一起就會重演 CODE_REPORT_batch-ingest-no-ocr-207docs-root-cause_20260922.md
+          // 那種「看起來都一樣、實際狀態不同」的問題。這個值不在 REAL_EXTRACTION_FIELD_KEYS
+          // 白名單內,不影響 Q3 決議的「待擷取文件」查詢(有原檔、無白名單欄位)。
+          await logEvent(env, jobId, 3, "ocr", "skipped", { reason: "extraction_mode_external" });
+          const placeholder: OcrExtractionResult = {
+            fields: [
+              {
+                fieldKey: "_ocr_status",
+                label: "OCR 狀態",
+                value: "awaiting_external_extraction",
+                confidence: 0,
+                extractionSource: "ai_inference",
+                sourceNote: `EXTRACTION_MODE=external(${new Date().toISOString()})`,
+              },
+            ],
+          };
+          return placeholder;
         }
 
         const obj = await env.FILES.get(original.r2Key);
@@ -206,9 +248,22 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
       });
 
       // 階段 4(extract):把 OCR 擷取到的欄位寫進 document_extracted_fields。
+      //
+      // 2026-09-23 修正:userInputFields.length 的分支(人工/外部寫回已經有欄位)不能呼叫
+      // /internal/documents/:id/fields —— 那個端點是「整份文件先刪全部既有欄位、再插入傳
+      // 進來的」語意(見 apps/api/src/routes/internal/documents.ts 該端點註解),而
+      // fieldsToExtractionResult() 組出來的 ocrResult.fields 只涵蓋 REAL_EXTRACTION_FIELD_KEYS
+      // 白名單內的欄位鍵——外部寫回端點另外寫的 SPEC 擴充欄位(taxable_amount/seller_tax_id/
+      // machine_no/line_items 等,不在白名單內,故意不 promote 到 documents 直欄)重跑到這裡
+      // 會被整批刪掉。這些欄位本來就已經正確地在 DB 裡(不然 userInputFields 不會有內容),
+      // 不需要也不能重寫,直接跳過。
       await step.do("stage-4-extract", async () => {
         await logEvent(env, jobId, 4, "extract", "started");
         await updateJob(env, jobId, { currentStage: 4, stageKey: "extract" });
+        if (userInputFields.length) {
+          await logEvent(env, jobId, 4, "extract", "skipped", { reason: "fields already present" });
+          return;
+        }
         await callInternal(env, "POST", `/internal/documents/${documentId}/fields`, { fields: ocrResult.fields });
         await logEvent(env, jobId, 4, "extract", "completed");
       });
@@ -291,7 +346,13 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         await logEvent(env, jobId, 8, "decision", "started");
         await updateJob(env, jobId, { currentStage: 8, stageKey: "decision" });
 
-        const forcedReview = vendorCheck.forcedReview || classifyResult.forceReview;
+        // userInputFields.length > 0 一律強制 review,不管 matching/vendor-check 結果多好——
+        // 這代表這份文件至少有一部分資料是人工/外部寫回的(見 CODE_TASK_
+        // extraction-writeback-api_20260923.md 階段二 B 項需求 3:「寫入後文件狀態為
+        // review,不得自動 archived」)。內部 Gemini 判讀走的自動決標/歸檔邏輯是針對「這次
+        // pipeline 自己跑出來的第一方 OCR 結果」設計、已經跑過驗證的路徑,外部寫回的資料
+        // 還沒有同等的信任基礎,不能因為剛好比對到高分候選就跳過人工看一眼。
+        const forcedReview = vendorCheck.forcedReview || classifyResult.forceReview || userInputFields.length > 0;
 
         if (!forcedReview && matchResult.autoLink) {
           await callInternal(env, "POST", `/internal/documents/${documentId}/auto-link`, {
@@ -307,9 +368,11 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
               ? "供應商未登記於主檔,強制送人工覆核"
               : classifyResult.forceReview
                 ? "財務分類範圍待確認或金額無法辨識,強制送人工覆核"
-                : matchResult.candidates.length
-                  ? "有候選物件但無法自動決標,送人工覆核挑選"
-                  : "無關聯候選,需人工建立或連結",
+                : userInputFields.length > 0
+                  ? "擷取結果為人工/外部寫回,強制送人工覆核"
+                  : matchResult.candidates.length
+                    ? "有候選物件但無法自動決標,送人工覆核挑選"
+                    : "無關聯候選,需人工建立或連結",
           });
           await logEvent(env, jobId, 8, "decision", "completed", { outcome: "review" });
         }

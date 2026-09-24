@@ -21,6 +21,13 @@
 // 分開設定可以限制外洩時的影響範圍(只能打這一條批次進件端點,不能冒充 document-worker)。
 // 設定:
 //   npx wrangler secret put LOCAL_SCANNER_TOKEN
+//
+// EXTRACTION_WRITEBACK_TOKEN:2026-09-23 補上,給 routes/extraction-writeback.ts 用(pipeline
+// 之外完成擷取判讀後寫回結果的呼叫端,見該檔案與 middleware/extraction-writeback-auth.ts
+// 開頭註解)。跟 LOCAL_SCANNER_TOKEN 一樣故意另開一組獨立密鑰,不共用——批次進件的權限範圍是
+// 「新增文件」,寫回的權限範圍是「改既有文件的擷取欄位/狀態」,性質不同,分開設定可以限制
+// 外洩時的影響範圍。設定:
+//   npx wrangler secret put EXTRACTION_WRITEBACK_TOKEN
 
 export type DocumentQueueMessage = {
   documentId: string;
@@ -37,4 +44,5 @@ export type Bindings = {
   R2_SECRET_ACCESS_KEY: string;
   R2_ACCOUNT_ID: string;
   LOCAL_SCANNER_TOKEN: string;
+  EXTRACTION_WRITEBACK_TOKEN: string;
 };

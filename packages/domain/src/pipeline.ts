@@ -45,3 +45,63 @@ export function pipelineLabel(step: number): string {
 export function pipelineStageByKey(key: string): PipelineStage | undefined {
   return PIPELINE_STAGES.find((s) => s.key === key);
 }
+
+// ---------------------------------------------------------------------------
+// 外部擷取(pipeline 之外完成的判讀,例如 Claude 對話、未來的 Gemini 付費 API)—— 見
+// CODE_TASK_extraction-writeback-api_20260923.md 階段二 A 項、CODE_REPORT_
+// extraction-writeback-api-phase2-proposals_20260923.md 提案 1。放在這裡(不是
+// apps/document-worker/src/workflow.ts 本地)是因為 apps/api 的寫回端點
+// (routes/extraction-writeback.ts)跟 apps/document-worker 的 stage-3-ocr 跳過判斷都要用
+// 同一份定義,兩邊都已經依賴 @paraacco/domain,不需要新增套件依賴。
+// ---------------------------------------------------------------------------
+
+/** 真的代表票面/單據資料的擷取欄位鍵——用來判斷 document_extracted_fields 裡的某一列是不是
+ * 「已經有人工/外部擷取結果」,不含 ingest_channel 之類的進件管道/系統標記欄位。清單來自
+ * @paraacco/ocr 的 ExtractedDocFields(packages/ocr/src/extraction-prompt.ts)與
+ * OcrExtractionResult(packages/ocr/src/provider.ts)兩份型別定義的欄位鍵總和——新增欄位時
+ * 三邊(這裡、那兩份型別)要一起同步更新,不然新欄位在這裡不會被認出來。 */
+export const REAL_EXTRACTION_FIELD_KEYS = new Set([
+  "docTypeCode",
+  "vendorNameRaw",
+  "vendorTaxId",
+  "buyerTaxId",
+  "accountNumber",
+  "contractNumber",
+  "docDate",
+  "invoiceDate",
+  "paymentDate",
+  "billingPeriod",
+  "invoicePeriod",
+  "invoiceNo",
+  "orderNo",
+  "serialNo",
+  "brand",
+  "model",
+  "itemName",
+  "amountCents",
+  "currency",
+  "scope",
+  "financeDocType",
+  "counterparty",
+  "classificationConfidence",
+  "notes",
+]);
+
+/** 外部擷取寫回 document_extracted_fields 時,sourceNote 必須以這個前綴開頭。
+ * extractionSource 本身無法區分「這是外部寫回的 ai_inference」還是「pipeline 自己這次/
+ * 上次跑出來的 ai_inference」——兩者都合法地是 'ai_inference'(見
+ * packages/ocr/src/shared.ts 的 toExtractionResult()),只能靠這個前綴判斷。 */
+export const EXTERNAL_EXTRACTION_SOURCE_NOTE_PREFIX = "外部擷取:";
+
+/** 一個 document_extracted_fields 欄位是否代表「外部(人工或 pipeline 之外)已經填好的真實
+ * 擷取結果」——不是 pipeline 自己這次/上次跑出來的 ai_inference,也不是 ingest_channel 之類
+ * 的系統標記。apps/document-worker 的 stage-3-ocr 用這個判斷要不要跳過 Gemini。 */
+export function isExternalExtractionField(field: {
+  fieldKey: string;
+  extractionSource: string;
+  sourceNote?: string | null;
+}): boolean {
+  if (!REAL_EXTRACTION_FIELD_KEYS.has(field.fieldKey)) return false;
+  if (field.extractionSource === "user_input") return true;
+  return field.extractionSource === "ai_inference" && (field.sourceNote?.startsWith(EXTERNAL_EXTRACTION_SOURCE_NOTE_PREFIX) ?? false);
+}

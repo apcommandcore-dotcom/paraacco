@@ -12,6 +12,13 @@
 // gemini-provider.ts 開頭註解)。用 `wrangler secret put GEMINI_API_KEY` 設定,不寫在
 // wrangler.toml 裡——申請時務必用沒有連結 Cloud Billing 帳戶的 Google Cloud 專案,確保免費層
 // 保證不收費。
+//
+// EXTRACTION_MODE:2026-09-23 新增(見 CODE_TASK_extraction-writeback-api_20260923.md、
+// CODE_REPORT_extraction-writeback-api-phase2-proposals_20260923.md 提案 2)。'external' |
+// 'gemini' 開關,不是敏感值,用 wrangler.toml 的 [vars] 設定(不是 secret)。只有精確等於
+// 'gemini' 才會呼叫 Gemini,其他任何值都當成 'external'(見 workflow.ts 的
+// resolveExtractionMode())。型別故意標成 optional string(不是聯集字面值)——讀取端已經
+// 用「非 'gemini' 一律 external」的方式處理未設定/打錯字,不需要在型別層再擋一次。
 
 export type DocumentQueueMessage = {
   documentId: string;
@@ -32,4 +39,5 @@ export type Bindings = {
   DOCUMENT_PROCESSING_WORKFLOW: Workflow<DocumentWorkflowParams>;
   AI: Ai;
   GEMINI_API_KEY: string;
+  EXTRACTION_MODE?: string;
 };

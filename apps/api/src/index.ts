@@ -4,6 +4,7 @@ import { whoamiFromHeaders } from "./whoami";
 import { authMiddleware } from "./middleware/auth";
 import { internalAuthMiddleware } from "./middleware/internal-auth";
 import { batchAuthMiddleware } from "./middleware/batch-auth";
+import { extractionWritebackAuthMiddleware } from "./middleware/extraction-writeback-auth";
 import type { Bindings } from "./bindings";
 import { vendorsRoute } from "./routes/vendors";
 import { categoriesRoute } from "./routes/categories";
@@ -24,6 +25,7 @@ import { statementLinesRoute } from "./routes/statement-lines";
 import { caseLinksRoute } from "./routes/case-links";
 import { internalRoute } from "./routes/internal";
 import { batchImportRoute } from "./routes/batch-import";
+import { extractionWritebackRoute } from "./routes/extraction-writeback";
 import { createDb } from "@paraacco/db";
 import { handleScheduled } from "./scheduled";
 
@@ -95,6 +97,12 @@ app.route("/api/case-links", caseLinksRoute);
 // Bypass 政策的設定說明)。
 app.use("/api/batch-import/*", batchAuthMiddleware());
 app.route("/api/batch-import", batchImportRoute);
+
+// 擷取結果寫回(pipeline 之外完成的判讀,見 middleware/extraction-writeback-auth.ts、
+// routes/extraction-writeback.ts 開頭註解,含 Cloudflare Access Bypass 政策的設定說明)——
+// 共用密鑰驗證,不是人類使用者也不是 document-worker 也不是批次進件腳本。
+app.use("/api/extraction-writeback/*", extractionWritebackAuthMiddleware());
+app.route("/api/extraction-writeback", extractionWritebackRoute);
 
 // apps/document-worker 透過 Cloudflare Service Binding 呼叫,走共用密鑰驗證,不是 Access
 // (見 middleware/internal-auth.ts)。這個前綴不可以掛公開網域。
