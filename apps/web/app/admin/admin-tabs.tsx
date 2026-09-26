@@ -23,11 +23,35 @@ interface Vendor {
   aliases: string[];
 }
 
+interface TaxIdLookupResponse {
+  taxId: string;
+  exists: boolean;
+  vendor: Vendor | null;
+  registry: { name: string; status: string | null; address: string | null; source: string } | null;
+  message?: string;
+}
+
+// 2026-09-26:輸入統編直接新增供應商——統編打滿 8 碼就自動查(已登記的直接提示;未登記的查
+// 經濟部商工登記帶入名稱),名稱仍可手動改。檢查碼錯誤前端先擋(跟 API 同一套規則)。
+function isValidTaxId(id: string): boolean {
+  if (!/^\d{8}$/.test(id)) return false;
+  const w = [1, 2, 1, 2, 1, 2, 4, 1];
+  let z = 0;
+  for (let i = 0; i < 8; i++) {
+    const p = Number(id[i]) * w[i];
+    z += Math.floor(p / 10) + (p % 10);
+  }
+  return z % 5 === 0 || (id[6] === "7" && (z + 1) % 5 === 0);
+}
+
 export function VendorsTab() {
   const [vendors, setVendors] = useState<Vendor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({ name: "", taxId: "" });
   const [submitting, setSubmitting] = useState(false);
+  const [lookup, setLookup] = useState<{ state: "idle" | "loading" | "done" | "invalid"; result?: TaxIdLookupResponse; error?: string }>({
+    state: "idle",
+  });
 
   function load() {
     apiFetch<{ vendors: Vendor[] }>("/api/vendors")
@@ -37,19 +61,41 @@ export function VendorsTab() {
 
   useEffect(load, []);
 
+  const taxId = form.taxId.replace(/\s|-/g, "");
+  useEffect(() => {
+    if (taxId.length < 8) return setLookup({ state: "idle" });
+    if (!isValidTaxId(taxId)) return setLookup({ state: "invalid" });
+    let cancelled = false;
+    setLookup({ state: "loading" });
+    const t = setTimeout(() => {
+      apiFetch<TaxIdLookupResponse>(`/api/vendors/lookup/${taxId}`)
+        .then((r) => {
+          if (cancelled) return;
+          setLookup({ state: "done", result: r });
+          if (r.registry) setForm((f) => (f.name.trim() ? f : { ...f, name: r.registry!.name }));
+        })
+        .catch((err) => !cancelled && setLookup({ state: "done", error: err instanceof Error ? err.message : String(err) }));
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [taxId]);
+
+  const alreadyExists = lookup.state === "done" && lookup.result?.exists;
+  const canSubmit = !submitting && !!form.name.trim() && lookup.state !== "invalid" && lookup.state !== "loading" && !alreadyExists;
+
   async function addVendor() {
-    if (!form.name.trim()) return;
+    if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
     try {
-      const id = `vnd-${form.name.trim().toLowerCase().replace(/[^a-z0-9一-鿿]+/g, "-").slice(0, 40)}-${Math.random()
-        .toString(36)
-        .slice(2, 6)}`;
       await apiFetch("/api/vendors", {
         method: "POST",
-        body: JSON.stringify({ id, name: form.name.trim(), taxId: form.taxId.trim() || undefined, defaultOwnership: "corp" }),
+        body: JSON.stringify({ name: form.name.trim(), taxId: taxId || undefined, defaultOwnership: "corp" }),
       });
       setForm({ name: "", taxId: "" });
+      setLookup({ state: "idle" });
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -65,19 +111,48 @@ export function VendorsTab() {
       </CardHeader>
       <CardContent>
         {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
-        <div className="mb-4 flex flex-wrap items-end gap-2">
+        <div className="mb-2 flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">統一編號(輸入後自動查名稱)</label>
+            <Input
+              value={form.taxId}
+              onChange={(e) => setForm((f) => ({ ...f, taxId: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && addVendor()}
+              className={`w-36 font-mono ${lookup.state === "invalid" ? "border-destructive" : ""}`}
+              maxLength={10}
+              inputMode="numeric"
+              placeholder="8 碼"
+            />
+          </div>
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">名稱</label>
-            <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className="w-56" />
+            <Input
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && addVendor()}
+              className="w-72"
+            />
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-muted-foreground">統一編號(選填)</label>
-            <Input value={form.taxId} onChange={(e) => setForm((f) => ({ ...f, taxId: e.target.value }))} className="w-32" maxLength={8} />
-          </div>
-          <Button size="sm" disabled={submitting || !form.name.trim()} onClick={addVendor}>
+          <Button size="sm" disabled={!canSubmit} onClick={addVendor}>
             <Plus size={14} className="mr-1" />
             新增供應商
           </Button>
+        </div>
+        <div className="mb-4 min-h-[20px] text-xs">
+          {lookup.state === "invalid" && <span className="text-destructive">統一編號檢查碼錯誤,請確認是否打錯</span>}
+          {lookup.state === "loading" && <span className="text-muted-foreground">查詢經濟部商工登記中…</span>}
+          {lookup.state === "done" && lookup.error && <span className="text-destructive">查詢失敗:{lookup.error}(仍可手動輸入名稱)</span>}
+          {alreadyExists && <span className="text-warning">此統編已登記為「{lookup.result!.vendor!.name}」</span>}
+          {lookup.state === "done" && lookup.result?.registry && (
+            <span className="text-muted-foreground">
+              {lookup.result.registry.source}:{lookup.result.registry.name}
+              {lookup.result.registry.status && `・${lookup.result.registry.status}`}
+              {lookup.result.registry.address && `・${lookup.result.registry.address}`}
+            </span>
+          )}
+          {lookup.state === "done" && !lookup.result?.exists && !lookup.result?.registry && !lookup.error && (
+            <span className="text-muted-foreground">{lookup.result?.message}</span>
+          )}
         </div>
 
         {vendors === null && <div className="text-sm text-muted-foreground">載入中…</div>}

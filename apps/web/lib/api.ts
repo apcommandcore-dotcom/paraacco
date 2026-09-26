@@ -218,8 +218,37 @@ export interface CountsResponse {
   pendingReview: number;
 }
 
-export type WarrantyType = "warranty" | "subscription";
-export type RenewalCycle = "one_time" | "monthly" | "quarterly" | "yearly";
+export type WarrantyType = "warranty" | "subscription" | "recurring_bill";
+export const WARRANTY_TYPE_LABELS: Record<WarrantyType, string> = { warranty: "保固", subscription: "訂閱", recurring_bill: "定期繳費" };
+export type RenewalCycle = "one_time" | "monthly" | "bimonthly" | "quarterly" | "semiannual" | "yearly";
+export const RENEWAL_CYCLE_LABELS: Record<RenewalCycle, string> = {
+  one_time: "一次性",
+  monthly: "每月",
+  bimonthly: "每兩個月",
+  quarterly: "每季",
+  semiannual: "每半年",
+  yearly: "每年",
+};
+export type PaymentMethod = "auto_debit" | "credit_card" | "manual";
+export const PAYMENT_METHOD_LABELS: Record<PaymentMethod, string> = { auto_debit: "自動扣款", credit_card: "信用卡代繳", manual: "手動繳費" };
+// 跟 packages/domain 的 WARRANTY_CATEGORIES 一致(API 層驗證用那一份)。
+export const WARRANTY_CATEGORY_LABELS: Record<string, string> = {
+  water: "水費",
+  electricity: "電費",
+  gas: "瓦斯",
+  internet: "網路",
+  telecom: "電信",
+  labor_insurance: "勞保",
+  health_insurance: "健保",
+  pension: "勞退",
+  tax: "稅金",
+  insurance: "保險",
+  rent: "租金",
+  software: "軟體",
+  membership: "會費",
+  device: "硬體",
+  other: "其他",
+};
 export type WarrantyStatus = "active" | "due_soon" | "expired";
 export const WARRANTY_STATUS_LABELS: Record<WarrantyStatus, string> = { active: "使用中", due_soon: "即將到期", expired: "已過期" };
 
@@ -230,11 +259,14 @@ export interface WarrantyItem {
   ownership: OwnershipScope;
   name: string;
   type: WarrantyType;
+  category: string | null;
   vendorName: string | null;
   startDate: string | null;
   endDate: string;
   renewalCycle: RenewalCycle;
   amountCents: number | null;
+  paymentMethod: PaymentMethod | null;
+  accountRef: string | null;
   currency: string | null;
   reminderDaysBefore: number;
   note: string | null;

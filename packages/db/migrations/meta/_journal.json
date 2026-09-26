@@ -57,6 +57,13 @@
       "when": 1789956982257,
       "tag": "0007_cc_statement_lines",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790390362086,
+      "tag": "0008_warranty_recurring_bills",
+      "breakpoints": true
     }
   ]
 }

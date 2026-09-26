@@ -730,6 +730,14 @@ export const activityLog = sqliteTable(
 // 即將到期／已過期)刻意不存欄位,用 endDate + reminderDaysBefore 即時算,避免存了狀態之後
 // 過期忘記更新變成髒資料(跟 documents.status 這種「有明確事件驅動轉換」的狀態不同,保固
 // 到期是純粹的時間函數,沒有理由不算就存)。
+//
+// 2026-09-26(migration 0008):擴充成「保固、訂閱與定期繳費」——type 加 'recurring_bill'
+// (水電、網路、瓦斯、勞健保、稅金等定期繳交費用),新增 category(細分類)、
+// payment_method(自動扣款/信用卡代繳/手動)、account_ref(用戶號碼/水號/電號,供對帳比對,
+// 不是金融帳號),renewal_cycle 加 'bimonthly'(台灣水電瓦斯多為雙月)與 'semiannual'。
+// 定期繳費的 end_date 語意是「下一期繳費期限」,繳完用 POST /api/warranty/:id/advance 推到
+// 下一期。這張表沒有被其他表外鍵參照,重建表不會踩到 D1 的 DROP TABLE 外鍵限制
+// (見 CODE_REPORT_d1-fk-rebuild-limitation_20260913.md)。
 // ---------------------------------------------------------------------------
 export const warrantySubscriptions = sqliteTable(
   "warranty_subscriptions",
@@ -739,12 +747,15 @@ export const warrantySubscriptions = sqliteTable(
     entityId: text("entity_id"),
     ownership: text("ownership").notNull(), // 'per' | 'corp' | 'advance' | 'custody',見 documents/purchases/assets 同一套列舉
     name: text("name").notNull(),
-    type: text("type").notNull(), // 'warranty' | 'subscription'
+    type: text("type").notNull(), // 'warranty' | 'subscription' | 'recurring_bill'
+    category: text("category"), // 見 WARRANTY_CATEGORIES(packages/domain),null = 未分類
     vendorName: text("vendor_name"),
     startDate: text("start_date"),
     endDate: text("end_date").notNull(), // YYYY-MM-DD,排序/提醒依據
-    renewalCycle: text("renewal_cycle").notNull().default("one_time"), // 'one_time' | 'monthly' | 'quarterly' | 'yearly'
+    renewalCycle: text("renewal_cycle").notNull().default("one_time"), // 'one_time' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'yearly'
     amountCents: integer("amount_cents"),
+    paymentMethod: text("payment_method"), // 'auto_debit' | 'credit_card' | 'manual' | null
+    accountRef: text("account_ref"), // 用戶號碼/水號/電號/保單號碼等,純文字
     currency: text("currency").default("TWD"),
     reminderDaysBefore: integer("reminder_days_before").notNull().default(30),
     note: text("note"),
@@ -761,11 +772,16 @@ export const warrantySubscriptions = sqliteTable(
       sql`${t.entityType} IS NULL OR ${t.entityType} IN ('asset')`,
     ),
     ownershipCheck: check("warranty_subscriptions_ownership_check", sql`${t.ownership} IN ('per', 'corp', 'advance', 'custody')`),
-    typeCheck: check("warranty_subscriptions_type_check", sql`${t.type} IN ('warranty', 'subscription')`),
+    typeCheck: check("warranty_subscriptions_type_check", sql`${t.type} IN ('warranty', 'subscription', 'recurring_bill')`),
     renewalCheck: check(
       "warranty_subscriptions_renewal_check",
-      sql`${t.renewalCycle} IN ('one_time', 'monthly', 'quarterly', 'yearly')`,
+      sql`${t.renewalCycle} IN ('one_time', 'monthly', 'bimonthly', 'quarterly', 'semiannual', 'yearly')`,
     ),
+    paymentMethodCheck: check(
+      "warranty_subscriptions_payment_method_check",
+      sql`${t.paymentMethod} IS NULL OR ${t.paymentMethod} IN ('auto_debit', 'credit_card', 'manual')`,
+    ),
+    typeIdx: index("warranty_subscriptions_type_idx").on(t.type),
     amountCheck: check("warranty_subscriptions_amount_check", sql`${t.amountCents} IS NULL OR ${t.amountCents} >= 0`),
   }),
 );

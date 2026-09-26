@@ -282,3 +282,53 @@ describe("GET /documents —— 待擷取文件(資料庫實際狀態,不是 pip
     expect(body.documents.map((d) => d.id)).toContain(id);
   });
 });
+
+describe("POST /documents/:id/normalized-file —— 裁切轉正後的顯示檔(2026-09-26)", () => {
+  const PDF = new TextEncoder().encode("%PDF-1.4\n% test normalized\n%%EOF\n");
+
+  function upload(app: Hono<{ Bindings: Bindings }>, id: string, body: Uint8Array | string, contentType = "application/pdf") {
+    return app.request(`/documents/${id}/normalized-file`, { method: "POST", headers: { "Content-Type": contentType }, body }, env);
+  }
+
+  it("存成 normalized_pdf,original 不動;同內容重傳冪等", async () => {
+    const app = buildApp();
+    const id = await seedDocument("review");
+    await seedOriginalFile(id);
+
+    const res = await upload(app, id, PDF);
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { ok: boolean; unchanged: boolean; r2Key: string };
+    expect(body.unchanged).toBe(false);
+    expect(await env.FILES.get(body.r2Key)).not.toBeNull();
+
+    const again = await upload(app, id, PDF);
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as { unchanged: boolean }).unchanged).toBe(true);
+
+    const files = await createDb(env.DB).select().from(documentFiles).where(eq(documentFiles.documentId, id));
+    expect(files.filter((f) => f.kind === "original" && f.isCurrent)).toHaveLength(1);
+    expect(files.filter((f) => f.kind === "normalized_pdf")).toHaveLength(1);
+  });
+
+  it("內容不同時,舊的 normalized_pdf 標 isCurrent=false,只留一份 current", async () => {
+    const app = buildApp();
+    const id = await seedDocument("review");
+    await seedOriginalFile(id);
+    await upload(app, id, PDF);
+    await upload(app, id, new TextEncoder().encode("%PDF-1.4\n% v2\n%%EOF\n"));
+    const files = await createDb(env.DB).select().from(documentFiles).where(eq(documentFiles.documentId, id));
+    const normalized = files.filter((f) => f.kind === "normalized_pdf");
+    expect(normalized).toHaveLength(2);
+    expect(normalized.filter((f) => f.isCurrent)).toHaveLength(1);
+  });
+
+  it("非 PDF / 錯的 Content-Type / 文件不存在 / 沒有原檔 都拒絕", async () => {
+    const app = buildApp();
+    const id = await seedDocument("review");
+    expect((await upload(app, id, PDF)).status).toBe(409); // 還沒有 original
+    await seedOriginalFile(id);
+    expect((await upload(app, id, "not a pdf")).status).toBe(400);
+    expect((await upload(app, id, PDF, "image/jpeg")).status).toBe(415);
+    expect((await upload(app, "DOC-2026-999998", PDF)).status).toBe(404);
+  });
+});

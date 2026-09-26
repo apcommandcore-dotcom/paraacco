@@ -373,7 +373,7 @@ function TodoWidget({ documents, warranty }: { documents: DocumentRow[] | null; 
     .map((w) => ({
       key: `wsu-${w.id}`,
       label: w.name,
-      sub: `保固/訂閱到期・${w.endDate}`,
+      sub: `${w.type === "recurring_bill" ? "定期繳費期限" : "保固/訂閱到期"}・${w.endDate}`,
       daysLeft: daysUntil(w.endDate, now),
       overdue: w.status === "expired",
       href: "/warranty",
@@ -409,7 +409,7 @@ function WarrantyWidget({ warranty }: { warranty: WarrantyItem[] | null }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>即將到期的保固與訂閱</CardTitle>
+        <CardTitle>即將到期的保固、訂閱與繳費</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
         {warranty === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}

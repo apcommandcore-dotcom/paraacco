@@ -28,7 +28,7 @@ const TABS = [
 
 const MORE_LINKS = [
   { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
-  { href: "/warranty", label: "保固與訂閱", en: "COVERAGE" },
+  { href: "/warranty", label: "保固與定期繳費", en: "COVERAGE" },
   { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
   { href: "/admin", label: "管理後台", en: "ADMIN" },
 ];

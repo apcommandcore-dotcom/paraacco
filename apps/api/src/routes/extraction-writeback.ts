@@ -12,6 +12,8 @@
 //        (CODE_REPORT_batch-ingest-no-ocr-207docs-root-cause_20260922.md)已經證明 pipeline
 //        進度會騙人)。
 //   POST /api/extraction-writeback/documents/:id  寫回單一文件的擷取結果。
+//   POST /api/extraction-writeback/documents/:id/normalized-file  上傳裁切空白+轉正後的顯示用
+//        PDF(2026-09-26 新增),存成 document_files kind='normalized_pdf',原檔 original 不動。
 
 import { Hono } from "hono";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
@@ -338,4 +340,87 @@ extractionWritebackRoute.post("/documents/:id", async (c) => {
     skippedUserConfirmed,
     requeued: true,
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// 顯示用正規化檔案(2026-09-26 新增)—— 外部判讀時順便把掃描檔裁掉空白、轉正、重新壓縮
+// (見 ~/dev/_reports/paraacco/extraction-*/normalize 腳本),上傳到這裡存成
+// document_files kind='normalized_pdf'(schema 本來就預留這個 kind)。
+//
+// 設計重點:
+//   - original 完全不動:sha256 重複偵測(internal/documents.ts duplicate-check)、pipeline
+//     stage-2/3 都只看 kind='original',正規化檔不會影響去重與擷取。
+//   - 冪等:同一份文件上傳 sha256 相同的正規化檔,直接回 ok、不重複寫 R2/D1。內容不同時,舊的
+//     normalized_pdf 標 isCurrent=false(R2 物件保留,不刪),新的設為 current。
+//   - 只收 application/pdf,上限跟 batch-import 一樣 25MB,開頭必須是 %PDF-。
+//   - GET /api/documents/:id/file 預設優先回傳 current normalized_pdf(沒有才回 original),
+//     ?kind=original 仍可取原檔。
+// ---------------------------------------------------------------------------
+const NORMALIZED_MAX_BYTES = 25 * 1024 * 1024;
+
+extractionWritebackRoute.post("/documents/:id/normalized-file", async (c) => {
+  const id = c.req.param("id");
+  const contentType = (c.req.header("Content-Type") ?? "").split(";")[0].trim().toLowerCase();
+  if (contentType !== "application/pdf") return c.json({ error: "invalid_content_type", expected: "application/pdf" }, 415);
+
+  const bytes = await c.req.arrayBuffer();
+  if (bytes.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+  if (bytes.byteLength > NORMALIZED_MAX_BYTES) return c.json({ error: "too_large", maxBytes: NORMALIZED_MAX_BYTES }, 413);
+  const head = new TextDecoder().decode(new Uint8Array(bytes, 0, Math.min(5, bytes.byteLength)));
+  if (head !== "%PDF-") return c.json({ error: "not_a_pdf" }, 400);
+
+  const db = createDb(c.env.DB);
+  const [doc] = await db.select({ id: documents.id }).from(documents).where(eq(documents.id, id)).limit(1);
+  if (!doc) return c.json({ error: "not_found" }, 404);
+
+  const [original] = await db
+    .select()
+    .from(documentFiles)
+    .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, "original"), eq(documentFiles.isCurrent, true)))
+    .limit(1);
+  if (!original) return c.json({ error: "original_missing" }, 409);
+
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  const currentNormalized = await db
+    .select()
+    .from(documentFiles)
+    .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, "normalized_pdf"), eq(documentFiles.isCurrent, true)));
+  if (currentNormalized.some((f) => f.sha256 === sha256)) {
+    return c.json({ ok: true, unchanged: true, sha256, byteSize: bytes.byteLength });
+  }
+
+  const baseName = original.originalFileName.replace(/\.[^.]+$/, "");
+  const safeName = `${baseName}.normalized.pdf`.replace(/[^\w.\-\u4e00-\u9fff]/g, "_");
+  const r2Key = `documents/${id}/normalized/${sha256.slice(0, 16)}/${safeName}`;
+  await c.env.FILES.put(r2Key, bytes, { httpMetadata: { contentType: "application/pdf" } });
+
+  await db.batch([
+    db
+      .update(documentFiles)
+      .set({ isCurrent: false })
+      .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, "normalized_pdf"), eq(documentFiles.isCurrent, true))),
+    db.insert(documentFiles).values({
+      documentId: id,
+      kind: "normalized_pdf",
+      r2Key,
+      originalFileName: `${baseName}.pdf`,
+      mimeType: "application/pdf",
+      byteSize: bytes.byteLength,
+      sha256,
+      isCurrent: true,
+    }),
+  ]);
+
+  await db.insert(activityLog).values({
+    entityType: "document",
+    entityId: id,
+    kind: "ocr",
+    text: `上傳正規化顯示檔(裁切空白/轉正):${Math.round(original.byteSize / 1024)} KB → ${Math.round(bytes.byteLength / 1024)} KB,原檔保留`,
+    actorMemberId: null,
+  });
+
+  return c.json({ ok: true, unchanged: false, sha256, byteSize: bytes.byteLength, originalByteSize: original.byteSize, r2Key }, 201);
 });

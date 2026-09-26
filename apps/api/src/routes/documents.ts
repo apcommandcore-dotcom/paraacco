@@ -141,18 +141,25 @@ documentsRoute.get("/:id", async (c) => {
 });
 
 // 待覆核工作台中欄要顯示原始檔案(PDF/圖片)——直接把 R2 物件內容串流回來,不给前端另外處理
-// R2 存取權限(bucket 本身不公開)。預設拿目前生效的 original 檔案,也可以用 ?kind= 指定其他
-// kind(例如之後有 normalized_pdf)。
+// R2 存取權限(bucket 本身不公開)。可以用 ?kind= 指定 kind。
+// 2026-09-26:沒指定 kind 時優先回傳目前生效的 normalized_pdf(裁切空白+轉正後的顯示檔,
+// 見 routes/extraction-writeback.ts 的 normalized-file 端點),沒有才回 original;
+// ?kind=original 永遠拿原始掃描檔。
 documentsRoute.get("/:id/file", async (c) => {
   const db = createDb(c.env.DB);
   const id = c.req.param("id");
-  const kind = c.req.query("kind") ?? "original";
+  const requestedKind = c.req.query("kind");
+  const kinds = requestedKind ? [requestedKind] : ["normalized_pdf", "original"];
 
-  const [file] = await db
-    .select()
-    .from(documentFiles)
-    .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, kind), eq(documentFiles.isCurrent, true)))
-    .limit(1);
+  let file: typeof documentFiles.$inferSelect | undefined;
+  for (const kind of kinds) {
+    [file] = await db
+      .select()
+      .from(documentFiles)
+      .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, kind), eq(documentFiles.isCurrent, true)))
+      .limit(1);
+    if (file) break;
+  }
   if (!file) return c.json({ error: "not_found" }, 404);
 
   const obj = await c.env.FILES.get(file.r2Key);
