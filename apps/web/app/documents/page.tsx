@@ -1,5 +1,9 @@
 "use client";
 
+// 2026-09-26:總覽與清單合併——這一頁就是「總覽」(頂部 OverviewKpis + 文件列表),/dashboard
+// 轉址到這裡。列表日期欄改成「發票/帳單日期」,匯入(建立)時間只在詳情裡顯示;詳情 Drawer
+// 直接內嵌 PDF(優先裁切轉正後的顯示檔),並可開新視窗看原始掃描檔。
+//
 // 清單頁 = 文件列表 + 詳情 Drawer(規格 3.2、3.3)。2026-09-18 拿掉依購買案/依資產兩個
 // 分頁——Theo 明確要求「不需要留購買案和資產等標籤,直接刪掉」,清單只剩單一份文件列表,
 // 不再分三種 view。PurchasesView/AssetsView 兩個元件本體先保留在檔案裡不刪(還有其他地方
@@ -11,6 +15,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, Pencil, Search, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { OverviewKpis } from "@/components/overview-kpis";
 import { useScope } from "@/components/scope-context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Drawer } from "@/components/ui/drawer";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  API_BASE,
   apiFetch,
   DOC_STATUS_LABELS,
   MANUAL_RELATION_KIND,
@@ -78,7 +84,11 @@ function DocumentsRoot() {
 
   return (
     <AppShell>
-      <h1 className="mb-4 text-xl font-semibold tracking-wide">清單</h1>
+      <div className="mb-4 flex items-baseline gap-2.5">
+        <h1 className="m-0 text-[23px] font-extrabold tracking-tight">總覽</h1>
+        <span className="font-mono text-[10px] tracking-[0.16em] text-foreground-3">OVERVIEW</span>
+      </div>
+      <OverviewKpis />
       <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} initialStatus={searchParams.get("status") ?? ""} />
     </AppShell>
   );
@@ -325,17 +335,20 @@ function DocumentsView({
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>發票/帳單日期</TableHead>
                   <TableHead>文件</TableHead>
                   <TableHead>供應商</TableHead>
                   <TableHead>發票號碼</TableHead>
                   <TableHead>金額</TableHead>
                   <TableHead>狀態</TableHead>
-                  <TableHead>建立時間</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filtered.map((doc) => (
                   <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      {doc.invoiceDate ?? doc.docDate ?? <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell className="max-w-[240px]">
                       {editingId === doc.id ? (
                         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
@@ -386,7 +399,6 @@ function DocumentsView({
                     <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -398,6 +410,7 @@ function DocumentsView({
       <Drawer open={!!selectedId} onClose={() => router.push("/documents?view=document")} title={detail?.document.id ?? "載入中…"}>
         {detail && (
           <div className="space-y-6 text-sm">
+            <DocumentPreview detail={detail} />
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">狀態</h3>
               <div className="flex flex-wrap items-center gap-2">
@@ -431,6 +444,9 @@ function DocumentsView({
 
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">檔案</h3>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                匯入時間:{new Date(detail.document.createdAt).toLocaleString("zh-TW")}
+              </div>
               <ul className="space-y-1">
                 {detail.files.map((f) => (
                   <li key={f.id} className="flex items-center justify-between text-xs">
@@ -1519,6 +1535,38 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
         )}
       </Drawer>
     </>
+  );
+}
+
+// 詳情 Drawer 頂部直接看 PDF(2026-09-26)—— 優先裁切轉正後的 normalized_pdf(API 的 /file
+// 預設順序),另附開新視窗看顯示檔、看原始掃描檔兩個連結。
+function DocumentPreview({ detail }: { detail: DocumentDetail }) {
+  const original = detail.files.find((f) => f.kind === "original" && f.isCurrent);
+  const normalized = detail.files.find((f) => f.kind === "normalized_pdf" && f.isCurrent);
+  const display = normalized ?? original;
+  if (!display) return null;
+  const src = `${API_BASE}/api/documents/${detail.document.id}/file`;
+  return (
+    <section>
+      <div className="border border-border">
+        {display.mimeType.startsWith("image/") ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt={display.originalFileName} className="max-h-[520px] w-full object-contain" />
+        ) : (
+          <iframe src={src} title={display.originalFileName} className="h-[520px] w-full" />
+        )}
+      </div>
+      <div className="mt-1.5 flex justify-end gap-4 text-xs">
+        <a href={src} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+          開新視窗
+        </a>
+        {normalized && original && (
+          <a href={`${src}?kind=original`} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+            看原始掃描檔
+          </a>
+        )}
+      </div>
+    </section>
   );
 }
 

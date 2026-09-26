@@ -32,9 +32,8 @@ type Whoami = { email: string | null; name: string | null };
 const NAV_LINKS = [
   { href: "/inbox", label: "收件匣" },
   { href: "/review", label: "待覆核" },
-  { href: "/documents", label: "文件列表" },
-  { href: "/dashboard", label: "總覽" },
-  { href: "/reports", label: "報表" },
+  { href: "/documents", label: "總覽" },
+  { href: "/reports", label: "月報表" },
   { href: "/admin", label: "管理後台" },
 ];
 
