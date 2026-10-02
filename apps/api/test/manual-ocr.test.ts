@@ -1,5 +1,6 @@
 // 關鍵路徑測試 1/2:人工 OCR 覆蓋機制(見
-// CODE_TASK_manual-ocr-pipeline-integration_20260904.md)——POST /api/documents 帶
+// CODE_TASK_manual-ocr-pipeline-integration_20260904.md)——2026-09-28 起 POST /api/documents(網頁上傳)
+// 回 410,這條安全性質改成直接測共用的 registerDocument()(批次進件 documents-local 也走它)。原本是 POST /api/documents 帶
 // extractedFields 時,伺服器端要強制把 extractionSource 寫成 'user_input',不能相信
 // client 傳來的值(這是這條機制最重要的安全性質:偽造成看起來像自動 OCR 高信心結果的
 // 攻擊要在這一關就被擋下來)。
@@ -9,8 +10,18 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createDb, documentExtractedFields, members } from "@paraacco/db";
 import { eq } from "drizzle-orm";
 import { buildTestApp, TEST_AUTH } from "./helpers";
+import { registerDocument, type RegisterDocumentInput } from "../src/document-ingest";
 
-describe("POST /api/documents extractedFields → user_input 覆蓋機制", () => {
+// 模擬舊的 POST /api/documents body 直接餵給 registerDocument(),回傳形狀維持 { status, body }。
+async function register(body: Record<string, unknown>) {
+  const id = await registerDocument(createDb(env.DB), env.DOCUMENT_QUEUE, {
+    ...(body as unknown as RegisterDocumentInput),
+    actorMemberId: TEST_AUTH.memberId,
+  });
+  return { status: 201, json: async () => ({ ok: true as const, id }) };
+}
+
+describe("registerDocument extractedFields → user_input 覆蓋機制", () => {
   // documents.created_by_member_id 有 FK 指到 members.id——先種一筆對應假 auth 的
   // member 列(見 helpers.ts 的 TEST_AUTH)。用 beforeAll 不是 beforeEach:同一個測試
   // 檔案裡的多個 it() 共用同一個 D1 實例(@cloudflare/vitest-plugin 是「每個檔案」隔離,
@@ -27,12 +38,7 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
   });
 
   it("寫入的欄位 extraction_source 一律是 user_input,即使 client 沒有傳這個值", async () => {
-    const app = buildTestApp();
-
-    const res = await app.request("/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await register({
         ownership: "corp",
         fileName: "test-invoice.pdf",
         mimeType: "application/pdf",
@@ -43,8 +49,7 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
           { fieldKey: "vendorNameRaw", label: "供應商", value: "測試供應商", confidence: 100 },
           { fieldKey: "amountCents", label: "金額", value: "100000", confidence: 100 },
         ],
-      }),
-    }, env);
+      });
 
     expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: true; id: string };
@@ -62,12 +67,7 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
   });
 
   it("client 傳偽造的 extractionSource 值也會被蓋掉,不會被採信", async () => {
-    const app = buildTestApp();
-
-    const res = await app.request("/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await register({
         ownership: "corp",
         fileName: "spoofed.pdf",
         mimeType: "application/pdf",
@@ -78,8 +78,7 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
         // ai_inference——路由的 zod/型別解析只認 fieldKey/label/value/confidence,
         // 這個欄位理論上會被忽略,extractionSource 依然強制是 user_input。
         extractedFields: [{ fieldKey: "invoiceNo", label: "發票號碼", value: "FORGED-001", extractionSource: "ai_inference" }],
-      }),
-    }, env);
+      });
 
     expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: true; id: string };
@@ -90,20 +89,14 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
   });
 
   it("沒有帶 extractedFields 時完全不寫入任何欄位(維持原本自動 OCR 的行為不受影響)", async () => {
-    const app = buildTestApp();
-
-    const res = await app.request("/", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const res = await register({
         ownership: "corp",
         fileName: "auto-ocr.pdf",
         mimeType: "application/pdf",
         byteSize: 1,
         r2Key: "documents/test/original/v1/auto-ocr.pdf",
         source: "web_upload",
-      }),
-    }, env);
+      });
 
     expect(res.status).toBe(201);
     const body = (await res.json()) as { ok: true; id: string };
@@ -111,5 +104,14 @@ describe("POST /api/documents extractedFields → user_input 覆蓋機制", () =
     const db = createDb(env.DB);
     const fields = await db.select().from(documentExtractedFields).where(eq(documentExtractedFields.documentId, body.id));
     expect(fields).toHaveLength(0);
+  });
+
+  it("POST /api/documents(網頁上傳)已停用,回 410", async () => {
+    const res = await buildTestApp().request(
+      "/",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ownership: "corp" }) },
+      env,
+    );
+    expect(res.status).toBe(410);
   });
 });

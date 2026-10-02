@@ -18,6 +18,12 @@ import { canWrite } from "../middleware/auth";
 
 export const uploadsRoute = new Hono<{ Bindings: Bindings }>();
 
+// 2026-09-28 停用:原始檔只留 NAS,R2 不再收新檔(CODE_TASK_local-originals-nas-path_20260927_V1.01.md)。
+// 預簽 URL 與直接上傳一律回 410,下面的舊實作保留到下一版再刪。
+uploadsRoute.use("*", async (c) =>
+  c.json({ error: "gone", message: "網頁上傳已停用。請把檔案放進 NAS 的 Bookkeeper_Scanner 資料夾。" }, 410),
+);
+
 const MAX_BYTES = 25 * 1024 * 1024; // 25MB,單據 PDF/照片綽綽有餘,避免濫用把 Worker 記憶體撐爆。
 const BUCKET_NAME = "paraacco-files";
 const PRESIGN_EXPIRES_SECONDS = 600; // 10 分鐘——單檔上傳綽綽有餘,過期時間拉太長沒有意義。

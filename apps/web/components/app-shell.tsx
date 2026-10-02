@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, ChevronDown, FileBarChart, LogOut, Menu, Plus, Search, X } from "lucide-react";
+import { Bell, ChevronDown, FileBarChart, LogOut, Menu, Search, X } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { useScope } from "@/components/scope-context";
 import { apiFetch, OWNERSHIP_LABELS, type CountsResponse, type NotificationItem, type OwnershipScope } from "@/lib/api";
@@ -22,11 +22,14 @@ import { apiFetch, OWNERSHIP_LABELS, type CountsResponse, type NotificationItem,
 // /search)全部原封不動,只是拿掉了在側邊欄各自佔一格的入口。
 // 2026-09-26(Theo):總覽與清單合併成「總覽」(/documents,/dashboard 轉址過去);原本收在
 // 「更多」下拉選單的四項直接攤在頂部分頁,拿掉下拉選單。
+// 2026-09-28:拿掉「快速上傳」按鈕(唯一入口是 NAS 的 Bookkeeper_Scanner,見
+// CODE_TASK_local-originals-nas-path_20260927_V1.01.md),新增「定期帳單」月份檢核分頁。
 const TABS: { href: string; label: string; en: string; countKey?: "process"; alsoActive?: string[] }[] = [
   { href: "/documents", label: "總覽", en: "OVERVIEW", alsoActive: ["/dashboard"] },
   { href: "/inbox", label: "處理中心", en: "PROCESS", countKey: "process" },
   { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
   { href: "/warranty", label: "保固與定期繳費", en: "COVERAGE" },
+  { href: "/recurring", label: "定期帳單", en: "RECURRING" },
   { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
   { href: "/admin", label: "管理後台", en: "ADMIN" },
 ];
@@ -127,13 +130,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <div className="flex flex-none items-center gap-2">
           <ScopeSwitcher />
-          <Link
-            href="/inbox"
-            className="hidden h-[34px] items-center gap-1.5 border border-transparent bg-brand px-3 text-xs font-semibold text-on-brand no-underline hover:bg-brand-hover lg:flex"
-          >
-            <Plus size={13} />
-            快速上傳
-          </Link>
           <Link
             href="/reports"
             className="hidden h-[34px] items-center gap-1.5 border border-line bg-surface px-2.5 text-xs text-foreground hover:border-border lg:flex"

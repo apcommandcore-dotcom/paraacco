@@ -8,6 +8,12 @@ compatibility_date = "2026-09-02"
 # 這裡是額外一層縱深防禦,不是唯一防線。
 workers_dev = false
 
+# NAS 原始檔根目錄(2026-09-28,CODE_TASK_local-originals-nas-path_20260927_V1.01.md)——原始檔只留
+# NAS,document_files.storage='local' 的 local_path 相對於這裡。GET /api/documents/:id/file 對 local
+# 文件回 { storage:"local", localRoot, localPath },由前端顯示 NAS 路徑,Worker 本身不讀這個位置。
+[vars]
+LOCAL_ROOT = "smb://192.168.20.91/ATLPAR_Bookkeeper"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "paraacco-db"

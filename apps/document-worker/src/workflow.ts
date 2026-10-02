@@ -37,6 +37,8 @@ interface DocumentFileRow {
   documentId: string;
   kind: string;
   r2Key: string;
+  /** 2026-09-28(migration 0009):'local' = 原始檔只在 NAS,R2 沒有這個物件(r2Key 只是佔位值)。 */
+  storage?: string;
   originalFileName: string;
   mimeType: string;
   byteSize: number;
@@ -71,6 +73,7 @@ interface DocumentDetailResponse {
 
 interface OriginalFileRef {
   r2Key: string;
+  storage: string;
   mimeType: string;
   originalFileName: string;
   sha256: string | null;
@@ -148,6 +151,7 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         }
         const original: OriginalFileRef = {
           r2Key: originalFile.r2Key,
+          storage: originalFile.storage ?? "r2",
           mimeType: originalFile.mimeType,
           originalFileName: originalFile.originalFileName,
           sha256: originalFile.sha256,
@@ -206,7 +210,9 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           return result;
         }
 
-        if (resolveExtractionMode(env) === "external") {
+        // 2026-09-28:原始檔只留 NAS(storage='local')時 Worker 讀不到檔案,不管 EXTRACTION_MODE
+        // 是什麼一律走外部判讀——不然 'gemini' 模式會去 R2 讀佔位 key、整個 job 失敗。
+        if (resolveExtractionMode(env) === "external" || original.storage === "local") {
           // 不讀 R2 檔案、不呼叫 Gemini——現階段擷取由外部進行,雲端不該花 Gemini 額度/費用。
           // _ocr_status 這個 fieldKey 不是新發明,沿用 @paraacco/ocr 的
           // unsupportedResult()(packages/ocr/src/shared.ts)已經在用的「沒有真的擷取到、
@@ -216,7 +222,9 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           // 混在一起就會重演 CODE_REPORT_batch-ingest-no-ocr-207docs-root-cause_20260922.md
           // 那種「看起來都一樣、實際狀態不同」的問題。這個值不在 REAL_EXTRACTION_FIELD_KEYS
           // 白名單內,不影響 Q3 決議的「待擷取文件」查詢(有原檔、無白名單欄位)。
-          await logEvent(env, jobId, 3, "ocr", "skipped", { reason: "extraction_mode_external" });
+          await logEvent(env, jobId, 3, "ocr", "skipped", {
+            reason: original.storage === "local" ? "original_on_nas" : "extraction_mode_external",
+          });
           const placeholder: OcrExtractionResult = {
             fields: [
               {

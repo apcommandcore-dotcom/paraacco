@@ -26,6 +26,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import {
   API_BASE,
   apiFetch,
+  documentOwnershipLabel,
   DOC_STATUS_LABELS,
   MANUAL_RELATION_KIND,
   OWNERSHIP_LABELS,
@@ -45,7 +46,7 @@ import {
   type ProcessingJob,
   type ActivityLogEntry,
 } from "@/lib/api";
-import { uploadDocument } from "@/lib/upload";
+import { NasLocation } from "@/components/nas-location";
 
 type ViewKind = "document" | "purchase" | "asset";
 
@@ -109,6 +110,7 @@ interface DocumentDetail {
   document: DocumentRow;
   fields: ExtractedField[];
   files: DocumentFile[];
+  localRoot?: string;
   purchaseLinks: (LinkRow & {
     purchaseId: string;
     summary: string | null;
@@ -340,6 +342,7 @@ function DocumentsView({
                   <TableHead>供應商</TableHead>
                   <TableHead>發票號碼</TableHead>
                   <TableHead>金額</TableHead>
+                  <TableHead>歸屬</TableHead>
                   <TableHead>狀態</TableHead>
                 </TableRow>
               </TableHeader>
@@ -396,6 +399,7 @@ function DocumentsView({
                     <TableCell className="whitespace-nowrap">
                       {doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}
                     </TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{documentOwnershipLabel(doc)}</TableCell>
                     <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
                     </TableCell>
@@ -415,6 +419,13 @@ function DocumentsView({
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">狀態</h3>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={statusVariant(detail.document.status)}>{DOC_STATUS_LABELS[detail.document.status]}</Badge>
+                <Badge variant="outline">
+                  歸屬:
+                  {documentOwnershipLabel({
+                    ...detail.document,
+                    ownershipScope: detail.fields.find((f) => f.fieldKey === "ownership_scope")?.value ?? null,
+                  })}
+                </Badge>
                 {detail.document.processingJob && (
                   <span className="font-mono text-xs text-muted-foreground">
                     {STAGE_LABELS[detail.document.processingJob.stageKey] ?? detail.document.processingJob.stageKey}
@@ -1062,12 +1073,10 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
   const [editingAsset, setEditingAsset] = useState(false);
   const [editForm, setEditForm] = useState(EMPTY_ASSET_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
-  // 說明書(2026-09-10 資產欄位對齊任務書任務 3)—— 連結既有文件用的輸入框狀態,跟上傳新檔案
-  // 共用同一個「連結」步驟(linkManualDocument),差別只在文件 ID 是使用者輸入還是上傳後拿到的。
+  // 說明書(2026-09-10 資產欄位對齊任務書任務 3)—— 連結既有文件用的輸入框狀態。2026-09-28 拿掉
+  // 「上傳新的說明書檔案」:唯一入口是 NAS 的 Bookkeeper_Scanner,進件後再用文件 ID 連結。
   const [manualDocId, setManualDocId] = useState("");
   const [linkingManual, setLinkingManual] = useState(false);
-  const [uploadingManual, setUploadingManual] = useState(false);
-  const [manualUploadProgress, setManualUploadProgress] = useState<number | null>(null);
 
   function load() {
     const path = scope ? `/api/assets?ownership=${scope}` : "/api/assets";
@@ -1115,25 +1124,6 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLinkingManual(false);
-    }
-  }
-
-  async function uploadManual(file: File) {
-    if (!detail) return;
-    setUploadingManual(true);
-    setManualUploadProgress(0);
-    setError(null);
-    try {
-      const uploaded = await uploadDocument(file, detail.asset.ownership, {
-        source: "web_upload",
-        onProgress: setManualUploadProgress,
-      });
-      await linkManualDocument(uploaded.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploadingManual(false);
-      setManualUploadProgress(null);
     }
   }
 
@@ -1459,23 +1449,9 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                     連結
                   </Button>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <label className="cursor-pointer text-primary hover:underline">
-                    上傳新的說明書檔案
-                    <input
-                      type="file"
-                      accept="application/pdf,image/*"
-                      className="hidden"
-                      disabled={uploadingManual}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        e.target.value = "";
-                        if (file) uploadManual(file);
-                      }}
-                    />
-                  </label>
-                  {uploadingManual && <span>上傳中{manualUploadProgress != null ? `(${manualUploadProgress}%)` : ""}…</span>}
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  新的說明書請放進 NAS 的 Bookkeeper_Scanner 資料夾,每日進件後在上面輸入文件 ID 連結。
+                </p>
               </div>
             </div>
           </>
@@ -1540,32 +1516,40 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
 
 // 詳情 Drawer 頂部直接看 PDF(2026-09-26)—— 優先裁切轉正後的 normalized_pdf(API 的 /file
 // 預設順序),另附開新視窗看顯示檔、看原始掃描檔兩個連結。
+// 2026-09-28:原始檔只留 NAS(storage='local')時不內嵌原檔,改顯示 NAS 位置;遷移期間 R2 上還有
+// normalized_pdf 顯示檔的舊文件照舊內嵌顯示檔,下方附 NAS 位置。
 function DocumentPreview({ detail }: { detail: DocumentDetail }) {
   const original = detail.files.find((f) => f.kind === "original" && f.isCurrent);
-  const normalized = detail.files.find((f) => f.kind === "normalized_pdf" && f.isCurrent);
-  const display = normalized ?? original;
-  if (!display) return null;
+  const normalized = detail.files.find((f) => f.kind === "normalized_pdf" && f.isCurrent && f.storage !== "local");
+  const originalIsLocal = original?.storage === "local";
+  const display = originalIsLocal ? normalized : (normalized ?? original);
+  if (!display && !originalIsLocal) return null;
   const src = `${API_BASE}/api/documents/${detail.document.id}/file`;
   return (
-    <section>
-      <div className="border border-border">
-        {display.mimeType.startsWith("image/") ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={src} alt={display.originalFileName} className="max-h-[520px] w-full object-contain" />
-        ) : (
-          <iframe src={src} title={display.originalFileName} className="h-[520px] w-full" />
-        )}
-      </div>
-      <div className="mt-1.5 flex justify-end gap-4 text-xs">
-        <a href={src} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-          開新視窗
-        </a>
-        {normalized && original && (
-          <a href={`${src}?kind=original`} target="_blank" rel="noreferrer" className="text-primary hover:underline">
-            看原始掃描檔
-          </a>
-        )}
-      </div>
+    <section className="space-y-2">
+      {display && (
+        <div>
+          <div className="border border-border">
+            {display.mimeType.startsWith("image/") ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={src} alt={display.originalFileName} className="max-h-[520px] w-full object-contain" />
+            ) : (
+              <iframe src={src} title={display.originalFileName} className="h-[520px] w-full" />
+            )}
+          </div>
+          <div className="mt-1.5 flex justify-end gap-4 text-xs">
+            <a href={src} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+              開新視窗
+            </a>
+            {normalized && original && !originalIsLocal && (
+              <a href={`${src}?kind=original`} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                看原始掃描檔
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+      {originalIsLocal && original && <NasLocation file={original} localRoot={detail.localRoot} />}
     </section>
   );
 }

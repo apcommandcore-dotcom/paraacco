@@ -45,4 +45,6 @@ export type Bindings = {
   R2_ACCOUNT_ID: string;
   LOCAL_SCANNER_TOKEN: string;
   EXTRACTION_WRITEBACK_TOKEN: string;
+  /** NAS 原始檔根目錄(wrangler.toml [vars]),document_files.local_path 相對於這裡。 */
+  LOCAL_ROOT: string;
 };

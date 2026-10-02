@@ -113,6 +113,12 @@ export interface DocumentRow {
   // 第 1 節),已經有值不會被覆蓋;null 時前端要自己 fallback 顯示 vendorNameRaw 或 id,
   // 不能當作一定有值(舊文件、或 OCR 也沒擷取到品名時仍然是 null)。
   displayName: string | null;
+  // 2026-09-28(migration 0009):NAS 原檔已歸檔到正式位置的時間、專案代碼(只做標記)。
+  filedAt?: string | null;
+  projectCode?: string | null;
+  // 2026-09-28(CODE_TASK V1.04):'shared' = 共用(信用卡帳單/銀行對帳單)。documents.ownership 沒有這個值,
+  // 存在擷取欄位 ownership_scope;列表 API 帶出來,詳情從 fields 取。
+  ownershipScope?: string | null;
   createdAt: string;
   updatedAt: string;
   processingJob: ProcessingJob | null;
@@ -141,6 +147,10 @@ export interface DocumentFile {
   mimeType: string;
   byteSize: number;
   isCurrent: boolean;
+  sha256?: string | null;
+  // 2026-09-28:'local' = 原始檔只留 NAS(r2Key 只是佔位值),位置是 localRoot + localPath。
+  storage?: "r2" | "local";
+  localPath?: string | null;
 }
 
 export interface MatchReason {
@@ -416,3 +426,71 @@ export const DOC_STATUS_LABELS: Record<DocumentStatus, string> = {
   dup: "重複",
   ignored: "已略過",
 };
+
+// --- 定期帳單月份檢核(2026-09-28,apps/api/src/routes/recurring.ts)---
+
+export type RecurringCadence = "monthly" | "bimonthly_odd" | "bimonthly_even" | "yearly";
+export type CoverageStatus = "present" | "reminder_only" | "encrypted" | "not_required" | "missing";
+
+export const CADENCE_LABELS: Record<RecurringCadence, string> = {
+  monthly: "月",
+  bimonthly_odd: "雙月(單數月)",
+  bimonthly_even: "雙月(雙數月)",
+  yearly: "年",
+};
+
+export const COVERAGE_STATUS_LABELS: Record<CoverageStatus, string> = {
+  present: "有",
+  reminder_only: "只有催繳",
+  encrypted: "加密",
+  not_required: "無需帳單",
+  missing: "缺",
+};
+
+export interface RecurringSeriesRow {
+  id: string;
+  name: string;
+  cadence: RecurringCadence;
+  ownership: string | null;
+  entityId: string | null;
+  accountRef: string | null;
+  startMonth: string;
+  endMonth: string | null;
+}
+
+export interface CoverageCell {
+  month: string;
+  status: CoverageStatus;
+  expected: boolean;
+  documentIds: string[];
+  reminderDocumentIds: string[];
+  note: string | null;
+}
+
+export interface CoverageSeries extends RecurringSeriesRow {
+  months: CoverageCell[];
+  summary: { expected: number; present: number; reminderOnly: number; encrypted: number; notRequired: number; missing: number };
+}
+
+export interface CoverageResponse {
+  from: string;
+  to: string;
+  series: CoverageSeries[];
+}
+
+export interface RecurringDocumentInfo {
+  documentId: string;
+  billingMonths: string[];
+  billingMonthsConfirmed: boolean;
+  recurringSeriesId: string | null;
+  recurringSeriesConfirmed: boolean;
+  projectCode: string | null;
+  suggestion: { series: { seriesId: string; score: number } | null; billingMonths: string[] };
+}
+
+/** 文件歸屬顯示:ownership_scope=shared 顯示「共用」,否則照 ownership;未確認加註。只做顯示,不影響篩選。 */
+export function documentOwnershipLabel(doc: { ownership: string; ownershipConfirmed?: boolean; ownershipScope?: string | null }): string {
+  if (doc.ownershipScope === "shared") return "共用";
+  const label = OWNERSHIP_LABELS[doc.ownership as OwnershipScope] ?? doc.ownership;
+  return doc.ownershipConfirmed === false ? `${label}(未確認)` : label;
+}

@@ -9,6 +9,8 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, AlertCircle, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { NasLocation } from "@/components/nas-location";
+import { RecurringFields } from "@/components/recurring-fields";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -30,6 +32,7 @@ interface DocumentDetail {
   document: DocumentRow;
   fields: ExtractedField[];
   files: DocumentFile[];
+  localRoot?: string;
 }
 
 function confidenceVariant(confidence: number | null): "success" | "warning" | "destructive" | "outline" {
@@ -204,8 +207,11 @@ function ReviewWorkbench() {
   const originalFile = detail?.files.find((f) => f.kind === "original" && f.isCurrent);
   // 2026-09-26:有裁切空白+轉正後的 normalized_pdf 就優先顯示(API 的 /file 預設也是這個順序),
   // mimeType 要跟著實際顯示的檔案判斷——原檔是 jpg、正規化檔是 PDF 時不能用 <img>。
-  const normalizedFile = detail?.files.find((f) => f.kind === "normalized_pdf" && f.isCurrent);
-  const displayFile = normalizedFile ?? originalFile;
+  // 2026-09-28:原始檔只留 NAS(storage='local')時不內嵌原檔,改顯示 NAS 位置(遷移期間 R2 上還有
+  // normalized_pdf 的舊文件照舊內嵌顯示檔)。
+  const normalizedFile = detail?.files.find((f) => f.kind === "normalized_pdf" && f.isCurrent && f.storage !== "local");
+  const originalIsLocal = originalFile?.storage === "local";
+  const displayFile = originalIsLocal ? normalizedFile : (normalizedFile ?? originalFile);
   const entitySuggestionId = detail?.fields.find((f) => f.fieldKey === "entity_id")?.value;
   const projectSuggestionId = detail?.fields.find((f) => f.fieldKey === "project_id")?.value;
   const entitySuggestionName = entities.find((e) => e.id === entitySuggestionId)?.name;
@@ -276,7 +282,7 @@ function ReviewWorkbench() {
                         className="h-[420px] w-full"
                       />
                     )}
-                    {normalizedFile && originalFile && (
+                    {normalizedFile && originalFile && !originalIsLocal && (
                       <div className="flex justify-end border-t border-border px-2 py-1 text-xs text-muted-foreground">
                         <a
                           href={`${API_BASE}/api/documents/${detail.document.id}/file?kind=original`}
@@ -290,6 +296,13 @@ function ReviewWorkbench() {
                     )}
                   </div>
                 )}
+                {originalIsLocal && originalFile && (
+                  <div className="mb-4">
+                    <NasLocation file={originalFile} localRoot={detail.localRoot} />
+                  </div>
+                )}
+
+                <RecurringFields documentId={detail.document.id} projects={projects} />
 
                 {(entitySuggestionId || projectSuggestionId) && (
                   <div className="mb-4 border border-info-line bg-info-bg p-3 text-sm">

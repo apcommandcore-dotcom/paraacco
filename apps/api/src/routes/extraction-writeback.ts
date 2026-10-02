@@ -14,6 +14,7 @@
 //   POST /api/extraction-writeback/documents/:id  寫回單一文件的擷取結果。
 //   POST /api/extraction-writeback/documents/:id/normalized-file  上傳裁切空白+轉正後的顯示用
 //        PDF(2026-09-26 新增),存成 document_files kind='normalized_pdf',原檔 original 不動。
+//        2026-09-28 起 storage='local' 的文件回 409(顯示檔不再上傳)。
 
 import { Hono } from "hono";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
@@ -161,6 +162,10 @@ extractionWritebackRoute.get("/documents", async (c) => {
     .select({
       id: documents.id,
       r2Key: documentFiles.r2Key,
+      // 2026-09-28:storage='local' 的文件原檔在 NAS(r2Key 只是佔位值),判讀端照 localPath 讀檔。
+      storage: documentFiles.storage,
+      localPath: documentFiles.localPath,
+      sha256: documentFiles.sha256,
       originalFileName: documentFiles.originalFileName,
       createdAt: documents.createdAt,
     })
@@ -239,6 +244,17 @@ extractionWritebackRoute.post("/documents/:id", async (c) => {
   }
   if (body.lineItems != null) {
     candidates.push({ fieldKey: "line_items", label: "品項明細", value: JSON.stringify(body.lineItems), docColumn: null });
+  }
+  // 2026-09-28:判讀備註開頭的類型標籤([INV]、[CCS]、[UTIL]…,SPEC-extraction-prompt-rules)另存成
+  // finance_doc_type——scripts/archive.py 依它決定 NAS 歸檔類別資料夾(01_發票收據、04_對帳單…)。
+  const financeDocType = /^\s*\[([A-Z_]{2,12})\]/.exec(body.notes ?? "")?.[1];
+  if (financeDocType) {
+    candidates.push({ fieldKey: "finance_doc_type", label: "單據類型", value: financeDocType, docColumn: null });
+  }
+  // CODE_TASK V1.04:信用卡帳單、銀行對帳單一律「共用」(不分主體,作各帳單的對帳依據)。documents.ownership 的
+  // CHECK 沒有 shared,改寫 ownership_scope 欄位;ownershipConfirmed 不動。
+  if (financeDocType === "CCS" || financeDocType === "BNK") {
+    candidates.push({ fieldKey: "ownership_scope", label: "歸屬範圍", value: "shared", docColumn: null });
   }
 
   // 不覆蓋人工確認值(CODE_TASK 階段二 B 項需求 6):該欄位既有列若 isUserConfirmed = true,
@@ -380,6 +396,14 @@ extractionWritebackRoute.post("/documents/:id/normalized-file", async (c) => {
     .where(and(eq(documentFiles.documentId, id), eq(documentFiles.kind, "original"), eq(documentFiles.isCurrent, true)))
     .limit(1);
   if (!original) return c.json({ error: "original_missing" }, 409);
+  // 2026-09-28 原始檔只留 NAS:storage='local' 的文件,顯示檔不再上傳到 R2(R2 不收新檔),
+  // 網頁直接顯示 NAS 路徑。回 409 讓判讀端的正規化步驟明確跳過,而不是默默又寫一份進 R2。
+  if (original.storage === "local") {
+    return c.json(
+      { error: "local_storage", message: "這份文件的原始檔只留 NAS(storage=local),顯示檔不再上傳。" },
+      409,
+    );
+  }
 
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");

@@ -7,7 +7,7 @@
 // Service Binding + 共用密鑰)。
 
 import { Hono } from "hono";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import {
   activityLog,
   assets,
@@ -25,7 +25,6 @@ import {
 } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
-import { registerDocument } from "../document-ingest";
 
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -42,13 +41,20 @@ documentsRoute.get("/", async (c) => {
     ownership ? eq(documents.ownership, ownership) : undefined,
     vendorId ? eq(documents.vendorId, vendorId) : undefined,
   ].filter((v) => v !== undefined);
+  // ownershipScope(2026-09-28,CODE_TASK V1.04):信用卡帳單/銀行對帳單是「共用」,documents.ownership 的 CHECK
+  // 沒有這個值(改要重建表),存在 document_extracted_fields.ownership_scope='shared',列表直接帶出來給前端顯示。
+  const listColumns = {
+    ...getTableColumns(documents),
+    // 外層欄位要寫成 "documents"."id":drizzle 在 select 裡把 ${documents.id} 渲染成不帶表名的 "id",會被子查詢的表吃掉。
+    ownershipScope: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'ownership_scope')`,
+  };
   const rows = conditions.length
     ? await db
-        .select()
+        .select(listColumns)
         .from(documents)
         .where(and(...conditions))
         .orderBy(desc(documents.createdAt))
-    : await db.select().from(documents).orderBy(desc(documents.createdAt));
+    : await db.select(listColumns).from(documents).orderBy(desc(documents.createdAt));
 
   // 收件匣畫面要顯示 pipeline 進度(8 步驟簡化版:current_stage/stage_key)——一份文件
   // 可能因為 retry 累積多筆 job(見 CODE_REPORT_queue-consumer-fix-retest_20260904.md 的
@@ -137,6 +143,8 @@ documentsRoute.get("/:id", async (c) => {
     assetLinks: assetLinkRows,
     processingJob: jobs[0] ?? null,
     processingJobs: jobs,
+    // storage='local' 的檔案位置相對於這裡(2026-09-28),前端組完整 NAS 路徑用。
+    localRoot: c.env.LOCAL_ROOT,
   });
 });
 
@@ -145,6 +153,8 @@ documentsRoute.get("/:id", async (c) => {
 // 2026-09-26:沒指定 kind 時優先回傳目前生效的 normalized_pdf(裁切空白+轉正後的顯示檔,
 // 見 routes/extraction-writeback.ts 的 normalized-file 端點),沒有才回 original;
 // ?kind=original 永遠拿原始掃描檔。
+// 2026-09-28:storage='local'(原始檔只留 NAS)時不串流檔案,回 JSON
+// { storage:"local", localRoot, localPath, ... },前端顯示 NAS 路徑讓使用者自己開。
 documentsRoute.get("/:id/file", async (c) => {
   const db = createDb(c.env.DB);
   const id = c.req.param("id");
@@ -162,6 +172,19 @@ documentsRoute.get("/:id/file", async (c) => {
   }
   if (!file) return c.json({ error: "not_found" }, 404);
 
+  if (file.storage === "local") {
+    return c.json({
+      storage: "local",
+      localRoot: c.env.LOCAL_ROOT,
+      localPath: file.localPath,
+      kind: file.kind,
+      originalFileName: file.originalFileName,
+      mimeType: file.mimeType,
+      byteSize: file.byteSize,
+      sha256: file.sha256,
+    });
+  }
+
   const obj = await c.env.FILES.get(file.r2Key);
   if (!obj) return c.json({ error: "file_missing_in_r2" }, 404);
 
@@ -174,51 +197,18 @@ documentsRoute.get("/:id/file", async (c) => {
   });
 });
 
-// 收件匣建立草稿紀錄 —— 檔案本身已由前端直接 PUT 到 R2 預簽 URL(kind='original'),這裡登記
-// documents + document_files metadata,開一個 processing job 佔位,並把 documentId 丟進
-// DOCUMENT_QUEUE 讓 document-worker 接手處理(見範圍決策:Queues + Workflows)。
-documentsRoute.post("/", async (c) => {
-  const auth = c.get("auth");
-  if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
-
-  const body = await c.req.json<{
-    ownership: string;
-    fileName: string;
-    mimeType: string;
-    byteSize: number;
-    r2Key: string;
-    sha256?: string;
-    source: string; // 'web_upload' | 'mobile_scan' | 'email_forward' | 'api_import'
-    // 每日批次進件(掃描機/NAS 排程腳本)呼叫時帶 'local-scanner-batch',標記進件管道用,
-    // 不影響上面 source 欄位(一律填既有的 'api_import',見上方 INGEST_CHANNEL_FIELD_KEY 註解)。
-    ingestChannel?: string;
-    // 人工 OCR(md 交接)接回 pipeline 用 —— 有帶的話,extractionSource 一律由伺服器端強制
-    // 設成 'user_input',不採信 client 傳來的值,避免有人假造成看起來像自動 OCR 的高信心結果
-    // (見 CODE_TASK_manual-ocr-pipeline-integration_20260904.md)。
-    extractedFields?: Array<{
-      fieldKey: string;
-      label: string;
-      value?: string;
-      confidence?: number;
-    }>;
-  }>();
-
-  const db = createDb(c.env.DB);
-  const id = await registerDocument(db, c.env.DOCUMENT_QUEUE, {
-    ownership: body.ownership,
-    fileName: body.fileName,
-    mimeType: body.mimeType,
-    byteSize: body.byteSize,
-    r2Key: body.r2Key,
-    sha256: body.sha256,
-    source: body.source,
-    ingestChannel: body.ingestChannel,
-    extractedFields: body.extractedFields,
-    actorMemberId: auth.memberId,
-  });
-
-  return c.json({ ok: true, id }, 201);
-});
+// 網頁上傳登記(收件匣「快速上傳」、資產「新增說明書」)——2026-09-28 停用:唯一入口是 NAS 的
+// Bookkeeper_Scanner,原始檔只留 NAS(CODE_TASK_local-originals-nas-path_20260927_V1.01.md)。
+// 先回 410 附說明,下一版再刪路由。
+documentsRoute.post("/", (c) =>
+  c.json(
+    {
+      error: "gone",
+      message: "網頁上傳已停用。請把檔案放進 NAS 的 Bookkeeper_Scanner 資料夾,每日排程會自動進件。",
+    },
+    410,
+  ),
+);
 
 // 待覆核畫面右欄「關聯候選」—— 讀取 pipeline 第 6 步(matching)已經算好、落地存在
 // relation_candidates 的結果(不是即時運算,見 domain/matching.ts 與 routes/internal/documents.ts

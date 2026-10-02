@@ -5,3 +5,4 @@
 export * from "./r2-key";
 export * from "./filename-template";
 export * from "./money";
+export * from "./local-path";

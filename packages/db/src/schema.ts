@@ -325,6 +325,14 @@ export const documents = sqliteTable(
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     archivedAt: text("archived_at"),
+    // 2026-09-28(migration 0009,CODE_TASK_local-originals-nas-path_20260927_V1.01.md)——
+    // filedAt:NAS 原檔已由 scripts/archive.py 搬到 <主體>/<年>/<類別>/ 正式位置的時間。刻意不沿用
+    // archivedAt:archivedAt 既有語意是「覆核完成、status 改成 archived」的時間(/:id/link、/:id/status
+    // 都會寫),檔案歸檔是覆核之後另一個動作,兩者混用會讓「已覆核但檔案還在 00_收件」的文件看不出來。
+    // projectCode:專案代碼 AP_YYNNN,只做標記,不影響 NAS 路徑(PLAN V1.01 裁示 2)。不加外鍵到
+    // projects——新增外鍵需要重建 documents 表,D1 做不到(見上方 source 欄位註解)。
+    filedAt: text("filed_at"),
+    projectCode: text("project_code"),
   },
   (t) => ({
     ownershipIdx: index("documents_ownership_idx").on(t.ownership),
@@ -371,9 +379,18 @@ export const documentFiles = sqliteTable(
     pageNumber: integer("page_number"),
     isCurrent: integer("is_current", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    // 2026-09-28(migration 0009):原始檔只留 NAS。storage='local' 時檔案不在 R2,localPath 是相對於
+    // wrangler.toml vars.LOCAL_ROOT(smb://192.168.20.91/ATLPAR_Bookkeeper)的路徑,例如
+    // 'Paraacco_公司財務系統/00_收件/20260928/DOC-2026-000720.pdf'。
+    // r2Key 仍是 NOT NULL + UNIQUE(放寬要重建表),local 檔一律填 LOCAL_R2_KEY_PREFIX + documentId
+    // 的佔位值(見 @paraacco/shared 的 localR2KeyPlaceholder()),不填空字串——空字串會撞 UNIQUE。
+    // storage 的合法值只在應用層驗證('r2' | 'local'),不加 DB CHECK,理由同 documents.source。
+    storage: text("storage").notNull().default("r2"),
+    localPath: text("local_path"),
   },
   (t) => ({
     documentIdx: index("document_files_document_idx").on(t.documentId),
+    localPathIdx: index("document_files_local_path_idx").on(t.localPath),
     sha256Idx: index("document_files_sha256_idx").on(t.sha256),
     r2KeyIdx: uniqueIndex("document_files_r2_key_idx").on(t.r2Key),
     kindCheck: check(
@@ -783,6 +800,75 @@ export const warrantySubscriptions = sqliteTable(
     ),
     typeIdx: index("warranty_subscriptions_type_idx").on(t.type),
     amountCheck: check("warranty_subscriptions_amount_check", sql`${t.amountCents} IS NULL OR ${t.amountCents} >= 0`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 定期帳單月份檢核 —— 2026-09-28(migration 0009,CODE_TASK_local-originals-nas-path_20260927_V1.01.md
+// 第二節 3、第七節)。一個 series = 一個會按月/雙月/年固定寄來的帳單來源(某張信用卡、某個水號、
+// 某個投保單位的健保),檢核「每個月份有沒有對應的文件」。
+//
+// 為什麼不沿用 warranty_subscriptions(type='recurring_bill',migration 0008):
+//   - 那張表是「提醒下一期繳費」:end_date NOT NULL 語意是下一期繳費期限,繳完用 /advance 往後推;
+//     這裡要的是「歷史每個月份齊不齊」,需要起訖月份(已停卡的花旗 2019-05~2023-08 沒有「下一期」)。
+//   - renewal_cycle 只有 'bimonthly',分不出單月/雙月收費(水費奇數月、電費偶數月),而 CHECK 約束
+//     要改就得重建表;match_rule(統編/名稱關鍵字/卡號末四碼)也沒有欄位放。
+//   - 兩者是一對零或一的關係:warrantySubscriptionId 可以把 series 掛回提醒那一列,不重複存金額/付款方式。
+// 月份與文件的對應不存在這裡,存在 document_extracted_fields(fieldKey='billing_month',value=YYYY-MM,
+// 雙月帳單寫兩列 billing_month / billing_month_2;fieldKey='recurring_series_id')。
+// ---------------------------------------------------------------------------
+export const recurringSeries = sqliteTable(
+  "recurring_series",
+  {
+    id: text("id").primaryKey(), // RCS-NNN(種子資料人工指定)
+    name: text("name").notNull(),
+    entityId: text("entity_id").references(() => entities.id),
+    ownership: text("ownership"), // 'per' | 'corp' | 'advance' | 'custody' | 'pending'(2026-09 前信用卡未分流)
+    vendorId: text("vendor_id").references(() => vendors.id),
+    accountRef: text("account_ref"), // 用戶號碼/水號/卡號末四碼,純文字
+    cadence: text("cadence").notNull(), // 'monthly' | 'bimonthly_odd' | 'bimonthly_even' | 'yearly'
+    startMonth: text("start_month").notNull(), // YYYY-MM
+    endMonth: text("end_month"), // YYYY-MM;null = 仍在繳,檢核算到上個月
+    matchRule: text("match_rule"), // JSON:{ vendorTaxId?, vendorNameKeywords?: string[], accountRef?, docKind? }
+    warrantySubscriptionId: text("warranty_subscription_id").references(() => warrantySubscriptions.id),
+    note: text("note"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    cadenceCheck: check(
+      "recurring_series_cadence_check",
+      sql`${t.cadence} IN ('monthly', 'bimonthly_odd', 'bimonthly_even', 'yearly')`,
+    ),
+    ownershipCheck: check(
+      "recurring_series_ownership_check",
+      sql`${t.ownership} IS NULL OR ${t.ownership} IN ('per', 'corp', 'advance', 'custody', 'pending')`,
+    ),
+    monthCheck: check(
+      "recurring_series_month_check",
+      sql`${t.startMonth} GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND (${t.endMonth} IS NULL OR ${t.endMonth} GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]')`,
+    ),
+  }),
+);
+
+// 某個 series 某個月份的人工標記——沒有文件、但不算缺(信用卡當月無消費 → 'not_required'),
+// 或只有加密讀不到的原始下載檔(花旗/聯邦,檔案在 90_無法處理,沒有登記成 document → 'encrypted')。
+// 有文件的月份不需要標記,由 billing_month 欄位即時算。
+export const recurringMonthMarks = sqliteTable(
+  "recurring_month_marks",
+  {
+    seriesId: text("series_id")
+      .notNull()
+      .references(() => recurringSeries.id),
+    month: text("month").notNull(), // YYYY-MM
+    status: text("status").notNull(), // 'not_required' | 'encrypted'
+    note: text("note"),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.seriesId, t.month] }),
+    statusCheck: check("recurring_month_marks_status_check", sql`${t.status} IN ('not_required', 'encrypted')`),
   }),
 );
 

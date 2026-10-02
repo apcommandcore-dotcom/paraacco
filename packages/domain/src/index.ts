@@ -13,3 +13,4 @@ export * from "./week";
 export * from "./classification";
 export * from "./reconciliation";
 export * from "./tax-id";
+export * from "./recurring";

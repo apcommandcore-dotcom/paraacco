@@ -14,11 +14,25 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.route("/batch-import", batchImportRoute);
 app.route("/internal/documents", internalDocumentsRoute);
 
+// 2026-09-28:multipart 上傳端點(存 R2)回 410,改測 documents-local(只登記 NAS 路徑)。
 async function importFile(ownership?: string) {
-  const form = new FormData();
-  form.set("file", new File([`fake pdf ${crypto.randomUUID()}`], "test.pdf", { type: "application/pdf" }));
-  if (ownership !== undefined) form.set("ownership", ownership);
-  return app.request("/batch-import/documents", { method: "POST", body: form }, env);
+  const sha256 = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return app.request(
+    "/batch-import/documents-local",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fileName: "test.pdf",
+        byteSize: 100,
+        mimeType: "application/pdf",
+        sha256,
+        localPath: "Paraacco_公司財務系統/00_收件/20260928/{id}.pdf",
+        ...(ownership !== undefined ? { ownership } : {}),
+      }),
+    },
+    env,
+  );
 }
 
 async function classify(id: string, scope: string) {

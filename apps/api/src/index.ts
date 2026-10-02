@@ -26,6 +26,8 @@ import { caseLinksRoute } from "./routes/case-links";
 import { internalRoute } from "./routes/internal";
 import { batchImportRoute } from "./routes/batch-import";
 import { extractionWritebackRoute } from "./routes/extraction-writeback";
+import { archiveRoute } from "./routes/archive";
+import { recurringRoute } from "./routes/recurring";
 import { createDb } from "@paraacco/db";
 import { handleScheduled } from "./scheduled";
 
@@ -91,6 +93,7 @@ app.route("/api/entities", entitiesRoute);
 app.route("/api/projects", projectsRoute);
 app.route("/api/statement-lines", statementLinesRoute);
 app.route("/api/case-links", caseLinksRoute);
+app.route("/api/recurring", recurringRoute);
 
 // 每日批次進件(排程腳本呼叫,不是人類使用者也不是 document-worker)—— 共用密鑰驗證,
 // 見 middleware/batch-auth.ts、routes/batch-import.ts 開頭註解(含 Cloudflare Access
@@ -103,6 +106,11 @@ app.route("/api/batch-import", batchImportRoute);
 // 共用密鑰驗證,不是人類使用者也不是 document-worker 也不是批次進件腳本。
 app.use("/api/extraction-writeback/*", extractionWritebackAuthMiddleware());
 app.route("/api/extraction-writeback", extractionWritebackRoute);
+
+// NAS 原始檔歸檔回寫(2026-09-28,見 routes/archive.ts 開頭註解)——本機腳本在 NAS 上搬檔後
+// 呼叫,沿用擷取寫回的共用密鑰;一樣需要 Cloudflare Access Bypass 政策(/api/archive/*)。
+app.use("/api/archive/*", extractionWritebackAuthMiddleware());
+app.route("/api/archive", archiveRoute);
 
 // apps/document-worker 透過 Cloudflare Service Binding 呼叫,走共用密鑰驗證,不是 Access
 // (見 middleware/internal-auth.ts)。這個前綴不可以掛公開網域。

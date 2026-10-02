@@ -17,6 +17,7 @@ import { createDb, documents, members } from "@paraacco/db";
 import { eq } from "drizzle-orm";
 import { COMMON_NAME_ALLOWLIST, resolveIdentityFromPayload } from "../src/access-jwt";
 import { canWrite, type AuthContext } from "../src/middleware/auth";
+import { registerDocument } from "../src/document-ingest";
 import { buildTestApp } from "./helpers";
 
 const SCANNER_COMMON_NAME = "28ef77a8a2c18f97310e963b4b19d98c.access";
@@ -58,11 +59,13 @@ describe("系統/批次 member(migrations-manual/0003_system_batch_member_seed.s
     expect(canWrite(row?.scope ?? null)).toBe(true);
   });
 
-  it("以系統 member 身分呼叫 POST /api/documents 能成功登記(跟 authMiddleware 會算出的 auth 一致)", async () => {
+  it("以系統 member 身分登記文件、並以同一組 auth 呼叫寫入端點(跟 authMiddleware 會算出的 auth 一致)", async () => {
     // 這裡不重跑真的 JWT 驗證(見檔頭註解為什麼不行),而是直接用 authMiddleware 解出
     // 這個系統 member 之後「會」產生的 AuthContext,驗證 documentsRoute 本身收到這組
     // auth 之後能不能正常寫入——上面兩個測試已經證明了「common_name → email → 這筆
     // member」這條映射鏈路是對的,這裡驗證的是鏈路終點(這組 auth)接到 route 之後的結果。
+    // 2026-09-28:POST /api/documents(網頁上傳)停用回 410,登記改直接走共用的
+    // registerDocument(),寫入權限改用 /:id/display-name 驗證。
     const systemAuth: AuthContext = {
       email: COMMON_NAME_ALLOWLIST[SCANNER_COMMON_NAME].email,
       memberId: "MEM-SYSTEM-BATCH",
@@ -72,29 +75,28 @@ describe("系統/批次 member(migrations-manual/0003_system_batch_member_seed.s
     };
     const app = buildTestApp(systemAuth);
 
+    const db = createDb(env.DB);
+    const id = await registerDocument(db, env.DOCUMENT_QUEUE, {
+      ownership: "corp",
+      fileName: "system-batch-test.pdf",
+      mimeType: "application/pdf",
+      byteSize: 1000,
+      r2Key: "documents/test/system-batch/v1/system-batch-test.pdf",
+      source: "api_import",
+      ingestChannel: "local-scanner-batch",
+      actorMemberId: systemAuth.memberId,
+    });
+    const [doc] = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    expect(doc?.createdByMemberId).toBe("MEM-SYSTEM-BATCH");
+
+    const gone = await app.request("/", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }, env);
+    expect(gone.status).toBe(410);
+
     const res = await app.request(
-      "/",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ownership: "corp",
-          fileName: "system-batch-test.pdf",
-          mimeType: "application/pdf",
-          byteSize: 1000,
-          r2Key: "documents/test/system-batch/v1/system-batch-test.pdf",
-          source: "api_import",
-          ingestChannel: "local-scanner-batch",
-        }),
-      },
+      `/${id}/display-name`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ displayName: "系統批次測試" }) },
       env,
     );
-
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { ok: true; id: string };
-
-    const db = createDb(env.DB);
-    const [doc] = await db.select().from(documents).where(eq(documents.id, body.id)).limit(1);
-    expect(doc?.createdByMemberId).toBe("MEM-SYSTEM-BATCH");
+    expect(res.status).toBe(200);
   });
 });

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>org.parallelserver.paraacco.integrity-check</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/python3</string>
+		<string>/Users/lushaoyi/dev/paraacco/scripts/integrity_check.py</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/lushaoyi/dev/paraacco/logs/integrity-check.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/lushaoyi/dev/paraacco/logs/integrity-check.out.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>23</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+</dict>
+</plist>

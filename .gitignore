@@ -8,10 +8,13 @@ out/
 cloudflare-env.d.ts
 next-env.d.ts
 .env
-.env.local
+.env*.local
 .DS_Store
 *.log
 CODE_REPORT_*.md
 .local-scanner-token
 _snapshots/
 .batch-ingest-dry-run
+.batch-import-encrypted.log
+.batch-ingest-pending-renames.tsv
+__pycache__/

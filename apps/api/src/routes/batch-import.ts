@@ -4,6 +4,8 @@
 // 開 processing job + 送進 DOCUMENT_QUEUE」,跟 routes/uploads.ts + routes/documents.ts
 // 分兩支端點做的事一樣,合成一支是為了排程腳本每個檔案只要打一次 HTTP 請求,不用像網頁前端
 // 那樣先拿預簽 URL 再另外呼叫建立 documents 記錄。
+// 2026-09-28:原始檔只留 NAS,「檔案存進 R2」這段已停用(/documents 回 410),改由
+// /documents-local 只登記 NAS 相對路徑與 SHA-256,見下方。
 //
 // 驗證方式(不是 Cloudflare Access,也不是 internal-auth 那組密鑰,見 middleware/
 // batch-auth.ts):排程腳本跑在 Cloudflare 網路之外,打 HTTPS 進來一定會先經過
@@ -27,65 +29,76 @@
 
 import { Hono } from "hono";
 import { createDb } from "@paraacco/db";
+import { validateLocalPath } from "@paraacco/shared";
 import type { Bindings } from "../bindings";
-import { registerDocument } from "../document-ingest";
+import { registerDocumentDetailed } from "../document-ingest";
 
 export const batchImportRoute = new Hono<{ Bindings: Bindings }>();
 
 const OWNERSHIP_VALUES = ["per", "corp", "advance", "custody"] as const;
 
-const MAX_BYTES = 25 * 1024 * 1024; // 跟 routes/uploads.ts 的 MAX_BYTES 一致,單據 PDF/照片綽綽有餘。
+// 2026-09-28 起原始檔只留 NAS(CODE_TASK_local-originals-nas-path_20260927_V1.01.md):R2 不再收新檔。
+// 舊的 multipart 上傳端點(檔案存進 R2)回 410,改用下面的 /documents-local。下一版再刪路由。
+batchImportRoute.post("/documents", (c) =>
+  c.json(
+    {
+      error: "gone",
+      message: "R2 已停止收新檔。每日進件改用 POST /api/batch-import/documents-local(只登記 NAS 路徑與 SHA-256,不傳檔案),見 scripts/batch-ingest_V1.03.sh。",
+    },
+    410,
+  ),
+);
 
-// 每日批次進件的來源只有兩種(見架構文件第 4 節):憑證類(掃描機資料夾)、對帳類(NAS 對帳
-// 資料夾)。兩者目前都當一般文件登記進 documents 表走 8 步驟 pipeline——對帳單明細列
-// (statement_lines)的拆解邏輯是後續勾稽 Workflow 的事,這支端點只負責「檔案進來、
-// pipeline 開始跑」,不在這裡分流。
-batchImportRoute.post("/documents", async (c) => {
-  const form = await c.req.formData();
-  const entry = form.get("file");
-  if (typeof entry === "string" || entry === null) return c.json({ error: "missing file field" }, 400);
-  const file = entry as unknown as { name: string; type: string; size: number; arrayBuffer(): Promise<ArrayBuffer> };
-  if (typeof file.arrayBuffer !== "function") return c.json({ error: "missing file field" }, 400);
-  if (file.size > MAX_BYTES) return c.json({ error: "file too large", maxBytes: MAX_BYTES }, 413);
+// 每日進件(NAS 原檔版)—— scripts/batch-ingest_V1.03.sh 把 Bookkeeper_Scanner 的檔案複製到
+// Paraacco_公司財務系統/00_收件/YYYYMMDD/、驗證 SHA-256 後呼叫這裡。不收檔案本身,只登記
+// document + document_files(storage='local'),再排入 DOCUMENT_QUEUE。document-worker 在
+// storage='local' 時不讀 R2、不呼叫 Gemini,等外部判讀寫回(見 apps/document-worker/src/workflow.ts)。
+//
+// localPath 可含 `{id}`:登記時換成配到的 DOC id,回應帶回實際路徑,腳本照這個名字在 NAS 上改名
+// (00_收件/20260928/{id}.pdf → DOC-2026-000720.pdf),不用再打一次歸檔回寫端點。
+const SHA256_RE = /^[0-9a-f]{64}$/;
+const MAX_BYTES = 200 * 1024 * 1024; // 只是登記 metadata,上限只為擋掉明顯錯誤的值。
+
+batchImportRoute.post("/documents-local", async (c) => {
+  const body = await c.req
+    .json<{ fileName?: unknown; byteSize?: unknown; mimeType?: unknown; sha256?: unknown; localPath?: unknown; ownership?: unknown }>()
+    .catch(() => null);
+  if (!body) return c.json({ error: "invalid_json" }, 400);
+
+  const { fileName, byteSize, mimeType, sha256, localPath, ownership } = body;
+  if (typeof fileName !== "string" || !fileName.trim() || fileName.length > 255) return c.json({ error: "invalid_file_name" }, 400);
+  if (typeof byteSize !== "number" || !Number.isInteger(byteSize) || byteSize < 0 || byteSize > MAX_BYTES) {
+    return c.json({ error: "invalid_byte_size" }, 400);
+  }
+  if (typeof sha256 !== "string" || !SHA256_RE.test(sha256)) return c.json({ error: "invalid_sha256", message: "sha256 必須是 64 碼小寫十六進位" }, 400);
+  if (mimeType !== undefined && typeof mimeType !== "string") return c.json({ error: "invalid_mime_type" }, 400);
+  const pathError = validateLocalPath(localPath);
+  if (pathError) return c.json({ error: "invalid_local_path", message: pathError }, 400);
 
   // 可選的預標歸屬(歷史回填用,見 CODE_TASK_archive-backfill-ownership-hint_20260918.md)——
-  // 有傳就視為呼叫端已確認,分類階段不覆蓋;沒傳維持原本的 'corp' 佔位、照樣被 Gemini 判讀覆蓋。
-  const ownershipRaw = form.get("ownership");
+  // 有傳就視為呼叫端已確認,分類階段不覆蓋;沒傳維持原本的 'corp' 佔位、照樣被判讀結果覆蓋。
   let ownershipHint: (typeof OWNERSHIP_VALUES)[number] | null = null;
-  if (ownershipRaw !== null && ownershipRaw !== "") {
-    if (typeof ownershipRaw !== "string" || !(OWNERSHIP_VALUES as readonly string[]).includes(ownershipRaw)) {
+  if (ownership !== undefined && ownership !== null && ownership !== "") {
+    if (typeof ownership !== "string" || !(OWNERSHIP_VALUES as readonly string[]).includes(ownership)) {
       return c.json({ error: "invalid ownership", allowed: OWNERSHIP_VALUES }, 400);
     }
-    ownershipHint = ownershipRaw as (typeof OWNERSHIP_VALUES)[number];
+    ownershipHint = ownership as (typeof OWNERSHIP_VALUES)[number];
   }
 
-  const bytes = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const sha256 = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
-
-  const safeName = file.name.replace(/[^\w.\-一-鿿]/g, "_") || "upload";
-  const r2Key = `documents/uploads/${crypto.randomUUID()}/${safeName}`;
-
-  await c.env.FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: file.type || "application/octet-stream" },
-  });
-
   const db = createDb(c.env.DB);
-  const id = await registerDocument(db, c.env.DOCUMENT_QUEUE, {
-    // 沒傳 ownership 時先給 'corp' 佔位——階段 5(classifying)會用 Gemini 判讀出的 scope
-    // 覆蓋成正確的 ownership(見 @paraacco/domain 的 classifyDocument()),這裡填什麼只影響
-    // pipeline 跑完之前的短暫顯示。有傳則標記 ownershipConfirmed,分類階段不覆蓋。
+  const { id, localPath: storedPath } = await registerDocumentDetailed(db, c.env.DOCUMENT_QUEUE, {
     ownership: ownershipHint ?? "corp",
     ownershipConfirmed: ownershipHint !== null,
-    fileName: file.name,
-    mimeType: file.type || "application/octet-stream",
-    byteSize: bytes.byteLength,
-    r2Key,
+    fileName: fileName.trim(),
+    mimeType: (mimeType as string | undefined) || "application/octet-stream",
+    byteSize,
     sha256,
+    storage: "local",
+    localPath: localPath as string,
     source: "api_import",
     ingestChannel: "local-scanner-batch",
     actorMemberId: null,
   });
 
-  return c.json({ ok: true, id }, 201);
+  return c.json({ ok: true, id, localPath: storedPath }, 201);
 });
