@@ -17,8 +17,8 @@
 //     (回滾)時清成 null。
 
 import { Hono } from "hono";
-import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
-import { activityLog, createDb, documentFiles, documents } from "@paraacco/db";
+import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { activityLog, createDb, documentFiles, documentPurchaseLinks, documents, vendors } from "@paraacco/db";
 import { MANAGED_ROOT, validateLocalPath } from "@paraacco/shared";
 import type { Bindings } from "../bindings";
 
@@ -141,8 +141,18 @@ archiveRoute.get("/documents", async (c) => {
       invoicePeriod: fieldValue("invoicePeriod"),
       financeDocType: fieldValue("finance_doc_type"),
       entityId: fieldValue("entity_id"),
+      // 2026-09-29(CODE_TASK_vendor-name-from-taxid_20260929.md):NAS 檔名的「對象」一律用主檔名稱,
+      // archive.py V1.03 沒有 vendorId 的文件不歸檔、不改名(列進 vendor-pending)。
+      vendorId: documents.vendorId,
+      vendorName: vendors.name,
+      vendorTaxId: fieldValue("vendorTaxId"),
+      vendorTaxIdQr: fieldValue("vendorTaxIdQr"),
+      vendorTaxIdPrinted: fieldValue("vendorTaxIdPrinted"),
+      vendorTaxIdSource: fieldValue("vendorTaxIdSource"),
+      vendorStatus: fieldValue("vendor_status"),
     })
     .from(documents)
+    .leftJoin(vendors, eq(vendors.id, documents.vendorId))
     .innerJoin(
       documentFiles,
       and(

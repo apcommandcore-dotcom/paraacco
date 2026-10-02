@@ -19,6 +19,7 @@ import { computeWarrantyStatus, daysUntilEndOfWeek } from "@paraacco/domain";
 import { documents, warrantySubscriptions, type Db } from "@paraacco/db";
 import { createNotification } from "./notify";
 import { reconcilePendingStatementLines } from "./reconciliation";
+import { backfillVendorIds } from "./vendor-resolution";
 
 const INBOX_STAGE_STATUSES = ["queued", "validating", "ocr", "extract", "classifying", "matching", "vendor_check", "retry"];
 const STALE_INBOX_DAYS = 3;
@@ -118,6 +119,9 @@ export async function runDailySweep(db: Db, now: Date = new Date()): Promise<voi
   await runStaleInboxSweep(db, now);
   await runWarrantyDueSweep(db, now);
   await reconcilePendingStatementLines(db);
+  // 2026-09-29 R-V4(CODE_TASK_vendor-name-from-taxid_20260929.md):供應商建檔後補對應的保險——
+  // POST /api/vendors 當下已經補過,這裡補抓建檔當下失敗、或主檔是從別的管道(migration/SQL)加進來的。
+  await backfillVendorIds(db, { actorName: "每日排程" });
 }
 
 // Cloudflare Cron Trigger 的 event.cron 字串跟 wrangler.toml 設定的完全一致才能比對,

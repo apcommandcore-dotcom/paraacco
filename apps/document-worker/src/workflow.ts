@@ -94,6 +94,9 @@ interface ComputeCandidatesResponse {
 interface VendorCheckResponse {
   matchedVendorId: string | null;
   forcedReview: boolean;
+  /** 2026-09-29(CODE_TASK_vendor-name-from-taxid_20260929.md):只用賣方統編比對。舊版 API 沒有這兩欄。 */
+  vendorStatus?: "matched" | "pending" | "taxid_unreadable";
+  vendorTaxId?: string | null;
 }
 
 interface ClassifyResponse {
@@ -373,7 +376,11 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
           await callInternal(env, "POST", `/internal/documents/${documentId}/decide`, {
             status: "review",
             note: vendorCheck.forcedReview
-              ? "供應商未登記於主檔,強制送人工覆核"
+              ? vendorCheck.vendorStatus === "taxid_unreadable"
+                ? "賣方統編無法辨識(讀不到或檢查碼錯誤),列入待建檔清單、不歸檔,強制送人工覆核"
+                : vendorCheck.vendorStatus === "pending"
+                  ? `賣方統編 ${vendorCheck.vendorTaxId ?? ""} 未建檔,列入待建檔供應商、不歸檔,強制送人工覆核`
+                  : "供應商未登記於主檔,強制送人工覆核"
               : classifyResult.forceReview
                 ? "財務分類範圍待確認或金額無法辨識,強制送人工覆核"
                 : userInputFields.length > 0

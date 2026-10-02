@@ -106,6 +106,10 @@ export interface DocumentRow {
   amountCents: number | null;
   currency: string | null;
   vendorNameRaw: string | null;
+  /** 供應商主檔名稱(vendorId 對應;2026-09-29 起顯示用的「對象」一律用它,見 displayVendor())。 */
+  vendorName?: string | null;
+  /** matched | pending | taxid_unreadable(document_extracted_fields.vendor_status)。 */
+  vendorStatus?: string | null;
   vendorId: string | null;
   ocrConfidence: number | null;
   // 使用者可編輯的顯示名稱(2026-09-18)—— 分類 pipeline 只在這欄還是 null 時,用 OCR
@@ -494,3 +498,42 @@ export function documentOwnershipLabel(doc: { ownership: string; ownershipConfir
   const label = OWNERSHIP_LABELS[doc.ownership as OwnershipScope] ?? doc.ownership;
   return doc.ownershipConfirmed === false ? `${label}(未確認)` : label;
 }
+
+// ---------------------------------------------------------------------------
+// 待建檔供應商(2026-09-29,CODE_TASK_vendor-name-from-taxid_20260929.md R-V3)——GET /api/vendors/pending
+// ---------------------------------------------------------------------------
+export type VendorTaxIdSource = "qr" | "printed" | "unreadable";
+export const VENDOR_TAX_ID_SOURCE_LABELS: Record<VendorTaxIdSource, string> = { qr: "QR", printed: "印字", unreadable: "無法辨識" };
+
+export interface PendingVendorGroup {
+  taxId: string;
+  sources: VendorTaxIdSource[];
+  ocrNames: string[];
+  documentCount: number;
+  documentIds: string[];
+  dateFrom: string | null;
+  dateTo: string | null;
+  totalCents: number;
+  localPaths: string[];
+}
+
+export interface UnreadableTaxIdDoc {
+  documentId: string;
+  rawTaxId: string | null;
+  ocrName: string | null;
+  date: string | null;
+  amountCents: number | null;
+  localPath: string | null;
+}
+
+export interface PendingVendorsResponse {
+  pending: PendingVendorGroup[];
+  unreadable: UnreadableTaxIdDoc[];
+}
+
+/** 顯示用的「對象」(R-V1):有主檔就用主檔名稱;沒有才退回 OCR 店名並標「未建檔」(OCR 店名僅供參考)。 */
+export function displayVendor(doc: { vendorName?: string | null; vendorNameRaw?: string | null }): { name: string; registered: boolean } {
+  if (doc.vendorName) return { name: doc.vendorName, registered: true };
+  return { name: doc.vendorNameRaw ?? "—", registered: false };
+}
+

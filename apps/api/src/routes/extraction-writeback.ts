@@ -19,7 +19,7 @@
 import { Hono } from "hono";
 import { and, eq, inArray, notInArray } from "drizzle-orm";
 import { activityLog, createDb, documentExtractedFields, documentFiles, documents, syncDocumentFts } from "@paraacco/db";
-import { EXTERNAL_EXTRACTION_SOURCE_NOTE_PREFIX, REAL_EXTRACTION_FIELD_KEYS } from "@paraacco/domain";
+import { EXTERNAL_EXTRACTION_SOURCE_NOTE_PREFIX, REAL_EXTRACTION_FIELD_KEYS, resolveVendorTaxId } from "@paraacco/domain";
 import type { Bindings } from "../bindings";
 
 export const extractionWritebackRoute = new Hono<{ Bindings: Bindings }>();
@@ -48,7 +48,23 @@ interface ExtractionWritebackBody {
    * stage-7-vendor-check 實際會讀 ocrResult.vendorTaxId 做供應商比對,用不同的鍵寫入會讓
    * 寫回後 retry 時比對不到供應商統編,不是單純命名問題) */
   vendorTaxId?: string | null;
-  /** 賣方名稱(發票所載營業人全名,SPEC R3)→ documents.vendorNameRaw */
+  /** 2026-09-29(SPEC V1.04 R-V2,CODE_TASK_vendor-name-from-taxid_20260929.md):賣方統編分來源回傳——
+   * 電子發票左側 QR Code 解碼值 / 票面「賣方」欄印字。有給任一個時,伺服器用 resolveVendorTaxId()
+   * (QR 優先、檢查碼、不一致以 QR 為準並註記)決定 vendorTaxId,原始值另存 vendorTaxIdQr / vendorTaxIdPrinted。
+   * 只給舊的 vendorTaxId 時行為不變(視為印字,或依 vendorTaxIdSource)。 */
+  vendorTaxIdQr?: string | null;
+  vendorTaxIdPrinted?: string | null;
+  /** 只給 vendorTaxId 時可標來源('qr' | 'printed')。 */
+  vendorTaxIdSource?: string | null;
+  /** 2026-10-01(SPEC V1.05,定期繳費 V1.04 3.1 第 5 點):文件角色 bill(帳單/繳費通知)| proof(繳費證明/收據)| bill_and_proof(超商代收聯)。 */
+  documentRole?: string | null;
+  /** 2026-10-01(SPEC V1.06 R11,定期繳費 V1.04 3.1 第 1 點):帳單上的用戶號碼/水號/電號/電話號碼 → document_extracted_fields:accountNumber
+   * (與內部 pipeline 同一個鍵)。自動掛期用「賣方統編 + 用戶號碼 ∈ accountRefs」判斷高信心。 */
+  accountNumber?: string | null;
+  /** 2026-10-01(SPEC V1.06 R11):帳單所屬月份 YYYY-MM(雙月帳單填期末月份)→ document_extracted_fields:billing_month,決定掛到哪一期。 */
+  billingMonth?: string | null;
+  /** 賣方名稱(發票所載營業人全名,SPEC R3)→ documents.vendorNameRaw。2026-09-29 起只供人工參考,
+   * 不參與供應商比對、不參與 NAS 檔名(R-V1)。 */
   vendorNameRaw?: string | null;
   /** 品牌(SPEC R3:招牌品牌另存,跟賣方名稱不同)→ documents.brand */
   brand?: string | null;
@@ -120,6 +136,8 @@ const TEXT_FIELD_DEFS: FieldDef[] = [
   // 都已經在 REAL_EXTRACTION_FIELD_KEYS 白名單內,不需要另外加。
   { bodyKey: "invoicePeriod", fieldKey: "invoicePeriod", label: "發票期別", docColumn: null },
   { bodyKey: "vendorTaxId", fieldKey: "vendorTaxId", label: "賣方統編", docColumn: null },
+  { bodyKey: "vendorTaxIdQr", fieldKey: "vendorTaxIdQr", label: "賣方統編(QR)", docColumn: null },
+  { bodyKey: "vendorTaxIdPrinted", fieldKey: "vendorTaxIdPrinted", label: "賣方統編(印字)", docColumn: null },
   { bodyKey: "buyerTaxId", fieldKey: "buyerTaxId", label: "買方統編", docColumn: null },
   // 這兩項是 SPEC 全新概念,內部 pipeline 沒有同義既有欄位,沿用 SPEC 原文 snake_case
   // (見上方註解:document_extracted_fields.fieldKey 本來就不是純 camelCase 慣例)。
@@ -242,6 +260,18 @@ extractionWritebackRoute.post("/documents/:id", async (c) => {
       docValue: v,
     });
   }
+  // R-V2:有分來源的統編時,vendorTaxId 一律寫成決定後的值(QR 優先);只給舊欄位時照舊。
+  let vendorTaxIdNote: string | null = null;
+  if (body.vendorTaxIdQr != null || body.vendorTaxIdPrinted != null) {
+    const resolved = resolveVendorTaxId({ qr: body.vendorTaxIdQr, printed: body.vendorTaxIdPrinted });
+    vendorTaxIdNote = resolved.note;
+    const value = resolved.taxId ?? resolved.rawInvalid;
+    const idx = candidates.findIndex((cand) => cand.fieldKey === "vendorTaxId");
+    if (idx >= 0) candidates.splice(idx, 1);
+    if (value) candidates.push({ fieldKey: "vendorTaxId", label: "賣方統編", value, docColumn: null });
+  } else if (body.vendorTaxId != null && (body.vendorTaxIdSource === "qr" || body.vendorTaxIdSource === "printed")) {
+    candidates.push({ fieldKey: "vendorTaxIdSource", label: "賣方統編來源", value: body.vendorTaxIdSource, docColumn: null });
+  }
   if (body.lineItems != null) {
     candidates.push({ fieldKey: "line_items", label: "品項明細", value: JSON.stringify(body.lineItems), docColumn: null });
   }
@@ -338,7 +368,7 @@ extractionWritebackRoute.post("/documents/:id", async (c) => {
     entityType: "document",
     entityId: id,
     kind: "ocr",
-    text: `外部擷取寫回(來源:${body.source},信心度:${body.confidence}):寫入 ${writtenLabel}${skippedLabel}${body.notes ? `;備註:${body.notes}` : ""}`,
+    text: `外部擷取寫回(來源:${body.source},信心度:${body.confidence}):寫入 ${writtenLabel}${skippedLabel}${body.notes ? `;備註:${body.notes}` : ""}${vendorTaxIdNote ? `;${vendorTaxIdNote}` : ""}`,
     actorMemberId: null,
   });
 

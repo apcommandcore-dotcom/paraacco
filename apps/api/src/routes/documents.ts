@@ -47,6 +47,10 @@ documentsRoute.get("/", async (c) => {
     ...getTableColumns(documents),
     // 外層欄位要寫成 "documents"."id":drizzle 在 select 裡把 ${documents.id} 渲染成不帶表名的 "id",會被子查詢的表吃掉。
     ownershipScope: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'ownership_scope')`,
+    // 2026-09-29(CODE_TASK_vendor-name-from-taxid_20260929.md R-V1):顯示用的「對象」一律用主檔名稱;
+    // vendorId 為空(統編未建檔/無法辨識)時前端才退回 OCR 店名並標「未建檔」。
+    vendorName: sql<string | null>`(SELECT v.name FROM vendors v WHERE v.id = "documents"."vendor_id")`,
+    vendorStatus: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'vendor_status')`,
   };
   const rows = conditions.length
     ? await db

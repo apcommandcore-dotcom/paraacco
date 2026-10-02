@@ -19,19 +19,16 @@ import {
   purchases,
   relationCandidates,
   syncDocumentFts,
-  vendorAliases,
-  vendors,
 } from "@paraacco/db";
 import {
   classifyDocument,
-  findRegisteredVendor,
   rankCandidates,
-  requiresForcedReview,
   resolveAutoLink,
   type MatchCandidateInput,
 } from "@paraacco/domain";
 import type { Bindings } from "../../bindings";
 import { createNotification } from "../../notify";
+import { checkDocumentVendor } from "../../vendor-resolution";
 
 export const internalDocumentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -279,6 +276,10 @@ internalDocumentsRoute.post("/:id/classify", async (c) => {
 
 // 階段 7(vendor_check):供應商主檔強制覆核規則(規格 2.6)—— 未登記於主檔一律強制送人工
 // 覆核,不受分數影響,獨立生效優先於下面的關聯評分結果。
+//
+// 2026-09-29(CODE_TASK_vendor-name-from-taxid_20260929.md):只用賣方統編比對(QR > 印字),不再比對
+// OCR 店名/別名;結果另存 vendor_status(matched/pending/taxid_unreadable)。邏輯在 ../../vendor-resolution.ts。
+// vendorNameRaw/vendorAliasCandidates 仍接受(舊版 document-worker 會送),但不參與比對。
 internalDocumentsRoute.post("/:id/vendor-check", async (c) => {
   const id = c.req.param("id");
   const body = await c.req.json<{
@@ -288,27 +289,8 @@ internalDocumentsRoute.post("/:id/vendor-check", async (c) => {
   }>();
 
   const db = createDb(c.env.DB);
-  const vendorRows = await db.select().from(vendors);
-  const aliasRows = await db.select().from(vendorAliases);
-  const vendorRecords = vendorRows.map((v) => ({
-    id: v.id,
-    name: v.name,
-    taxId: v.taxId,
-    aliases: aliasRows.filter((a) => a.vendorId === v.id).map((a) => a.alias),
-  }));
-
-  const matchedVendor = findRegisteredVendor(
-    { nameRaw: body.vendorNameRaw, taxId: body.vendorTaxId, aliasCandidates: body.vendorAliasCandidates },
-    vendorRecords,
-  );
-  const forcedReview = requiresForcedReview(matchedVendor);
-
-  await db
-    .update(documents)
-    .set({ vendorId: matchedVendor?.id ?? null, updatedAt: new Date().toISOString() })
-    .where(eq(documents.id, id));
-
-  return c.json({ matchedVendorId: matchedVendor?.id ?? null, forcedReview });
+  const result = await checkDocumentVendor(db, id, body.vendorTaxId ?? null);
+  return c.json(result);
 });
 
 // 階段 6(matching):對既有 purchases/assets 評分(見 domain/matching.ts),落地存進

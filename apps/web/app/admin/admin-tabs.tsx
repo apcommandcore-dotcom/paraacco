@@ -44,10 +44,12 @@ function isValidTaxId(id: string): boolean {
   return z % 5 === 0 || (id[6] === "7" && (z + 1) % 5 === 0);
 }
 
-export function VendorsTab() {
+// initialTaxId:從處理中心「待建檔供應商」點統編過來(/admin/vendors?taxId=…),自動帶入並查名稱(2026-09-29)。
+export function VendorsTab({ initialTaxId }: { initialTaxId?: string | null } = {}) {
   const [vendors, setVendors] = useState<Vendor[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", taxId: "" });
+  const [notice, setNotice] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: "", taxId: initialTaxId ?? "" });
   const [submitting, setSubmitting] = useState(false);
   const [lookup, setLookup] = useState<{ state: "idle" | "loading" | "done" | "invalid"; result?: TaxIdLookupResponse; error?: string }>({
     state: "idle",
@@ -89,11 +91,15 @@ export function VendorsTab() {
     if (!canSubmit) return;
     setSubmitting(true);
     setError(null);
+    setNotice(null);
     try {
-      await apiFetch("/api/vendors", {
+      const res = await apiFetch<{ name: string; linkedDocumentIds?: string[] }>("/api/vendors", {
         method: "POST",
         body: JSON.stringify({ name: form.name.trim(), taxId: taxId || undefined, defaultOwnership: "corp" }),
       });
+      // R-V4:建檔後同統編的待建檔文件自動對應,NAS 歸檔/改名由下一次 archive.py 接手。
+      const n = res.linkedDocumentIds?.length ?? 0;
+      setNotice(n ? `已新增「${res.name}」,${n} 份待建檔文件已自動對應(${res.linkedDocumentIds!.join("、")}),下次歸檔時用主檔名稱命名。` : `已新增「${res.name}」。`);
       setForm({ name: "", taxId: "" });
       setLookup({ state: "idle" });
       load();
@@ -111,6 +117,10 @@ export function VendorsTab() {
       </CardHeader>
       <CardContent>
         {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
+        {notice && <div className="mb-4 border border-ok-line bg-ok-bg p-3 text-sm text-ok">{notice}</div>}
+        <p className="mb-3 text-xs text-muted-foreground">
+          單據的「對象」一律用這裡的主檔名稱(依賣方統編對應),不用 OCR 從發票抬頭讀到的店名。未建檔的統編會列在「處理中心 → 待建檔供應商」。
+        </p>
         <div className="mb-2 flex flex-wrap items-end gap-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">統一編號(輸入後自動查名稱)</label>

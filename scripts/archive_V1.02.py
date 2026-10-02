@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-# paraacco NAS 原始檔歸檔 archive.py V1.03(2026-09-29)
-# V1.03:CODE_TASK_vendor-name-from-taxid_20260929.md——檔名「對象」一律用供應商主檔名稱(vendors.name,由賣方統編對應),
-#        不再用 OCR 店名;--source api 沒有 vendorId 的文件不歸檔、不改名,寫進 vendor-pending_*.tsv。
-#        新增 --source audit:回溯檢查已歸檔檔名(rename-plan / vendor-pending / no-taxid 三份清單 + vendor-link SQL),
-#        只列不動;rename-plan 與一般計畫同格式,Theo 確認後用 --apply 執行。V1.02 唯讀保留(archive_V1.02.py)。
-#        另新增 --source attachments(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md 2.3、2.4):物件的附件
-#        (出貨單/收據/說明書…與影片/照片)改名成 <主文件檔名去副檔名>_附件_<類型>_<序號>.<ext>,放主文件同一資料夾;
-#        主文件換人後重跑就會產生跟著改名的計畫。影片/照片列的 doc_id 是 ATT-<id>,--apply 走 /api/archive/attachment-moves。
+# paraacco NAS 原始檔歸檔 archive.py V1.02(2026-09-28)
 # V1.02:CODE_TASK V1.04——信用卡帳單與銀行對帳單不分年份一律 80_共用未分流/<年>/04_對帳單(拿掉「2026-09 前」限制);
 #        薪資轉帳(WPL/員工薪資)→ 該主體 05_薪資;國民年金依線上 ownership(corp → 10、per → 30)。V1.01 唯讀保留。
 # V1.01:CODE_TASK V1.02/V1.03 裁示——勞健保類(勞保/健保/勞退/國民年金/相關催繳與行政執行)改放 05_薪資,
@@ -54,7 +47,7 @@ import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
-VERSION = "V1.03"
+VERSION = "V1.02"
 HOME = Path.home()
 MANAGED_ROOT = "Paraacco_公司財務系統"
 MOUNT = Path(os.environ.get("MOUNT", "/Volumes/ATLPAR_Bookkeeper"))
@@ -133,43 +126,6 @@ def short_counterparty(name: str | None) -> str:
         s = s.replace(suf, "")
     s = re.sub(r'[\\/:*?"<>|\s]+', "", s).replace("_", "-")
     return s[:12] or "未知"
-
-
-# ---------------------------------------------------------------------------
-# 賣方統編(V1.03)——規則同 @paraacco/domain 的 resolveVendorTaxId():QR > 印字,檢查碼,不一致以 QR 為準。
-# ---------------------------------------------------------------------------
-TAX_WEIGHTS = (1, 2, 1, 2, 1, 2, 4, 1)
-TAX_SOURCE_LABELS = {"qr": "QR", "printed": "印字", "unreadable": "無法辨識"}
-
-
-def resolve_tax_id(qr=None, printed=None, legacy=None, legacy_source=None) -> dict:
-    qr, printed, legacy = normalize_tax_id(qr), normalize_tax_id(printed), normalize_tax_id(legacy)
-    if qr and is_valid_tax_id(qr):
-        note = f"賣方統編 QR({qr})與印字({printed})不一致,以 QR 為準" if printed and printed != qr else ""
-        return {"tax_id": qr, "source": "qr", "raw": "", "note": note}
-    if printed and is_valid_tax_id(printed):
-        return {"tax_id": printed, "source": "printed", "raw": "", "note": f"QR 賣方統編 {qr} 檢查碼錯誤,改用印字" if qr else ""}
-    if not qr and not printed and legacy and is_valid_tax_id(legacy):
-        return {"tax_id": legacy, "source": legacy_source if legacy_source in ("qr", "printed") else "printed", "raw": "", "note": ""}
-    raw = qr or printed or legacy
-    return {"tax_id": "", "source": "unreadable", "raw": raw, "note": f"賣方統編 {raw} 檢查碼錯誤" if raw else "讀不到賣方統編"}
-
-
-def filename_counterparty(local_path: str) -> str | None:
-    """YYYYMMDD_類型_對象[_金額]_DOC-….ext 的「對象」段;不是這個格式回 None。"""
-    stem = local_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    parts = stem.split("_")
-    if len(parts) < 4 or not parts[-1].startswith("DOC-") or not re.fullmatch(r"\d{8}", parts[0]):
-        return None
-    return parts[2]
-
-
-def replace_counterparty(local_path: str, new_seg: str) -> str:
-    folder, name = local_path.rsplit("/", 1)
-    stem, ext = name.rsplit(".", 1) if "." in name else (name, "")
-    parts = stem.split("_")
-    parts[2] = new_seg
-    return f"{folder}/{'_'.join(parts)}" + (f".{ext}" if ext else "")
 
 
 def fmt_amount(cents) -> str | None:
@@ -414,10 +370,6 @@ def plan_api(args) -> None:
             lp = d.get("localPath") or ""
             if d["status"] != "archived" or not lp.startswith(f"{MANAGED_ROOT}/00_收件/"):
                 continue
-            # V1.03 R-V3:供應商未建檔(沒有 vendorId)→ 不歸檔、不改名,列進 vendor-pending。
-            if not d.get("vendorId"):
-                pending.append(api_doc_to_audit(d))
-                continue
             doc = {
                 "id": d["documentId"], "ext": lp.rsplit(".", 1)[-1].lower() if "." in lp else "bin",
                 "tag": d.get("financeDocType"), "ownership": d["ownership"], "confirmed": bool(d["ownershipConfirmed"]),
@@ -438,69 +390,6 @@ def plan_api(args) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     write_plan(plan_path, rows)
     summarize(plan_path, rows)
-    if pending:
-        vp, nt = write_vendor_lists(pending, tag)
-        print(f"供應商未建檔、這次不歸檔:{len(pending)} 份 → {vp}、{nt}")
-
-
-# ---------------------------------------------------------------------------
-# 回溯檢查(V1.03,CODE_TASK_vendor-name-from-taxid_20260929.md 第二節)——只列不動
-# ---------------------------------------------------------------------------
-FILED_RE = re.compile(rf"^{re.escape(MANAGED_ROOT)}/(10|20|30|80)_[^/]+/")
-EXCLUDED_STATUSES = ("ignored", "dup")
-
-
-def api_doc_to_audit(d: dict) -> dict:
-    return {
-        "id": d["documentId"], "status": d["status"], "vendor_id": d.get("vendorId"), "vendor_name": d.get("vendorName"),
-        "vendor_status": d.get("vendorStatus"), "ocr_name": d.get("vendorNameRaw"),
-        "date": d.get("invoiceDate") or d.get("docDate"), "amount": d.get("amountCents"),
-        "local_path": d.get("localPath") or "", "sha256": d.get("sha256") or "",
-        "tax": d.get("vendorTaxId"), "tax_qr": d.get("vendorTaxIdQr"), "tax_printed": d.get("vendorTaxIdPrinted"),
-        "tax_src": d.get("vendorTaxIdSource"),
-    }
-
-
-def snapshot_doc_to_audit(r: dict) -> dict:
-    return {
-        "id": r["id"], "status": r["status"], "vendor_id": r.get("vendor_id"), "vendor_name": None, "vendor_status": r.get("vendor_status"),
-        "ocr_name": r.get("vendor_name_raw"), "date": r.get("invoice_date") or r.get("doc_date"), "amount": r.get("amount_cents"),
-        "local_path": r.get("local_path") or "", "sha256": r.get("sha256") or "",
-        "tax": r.get("tax"), "tax_qr": r.get("tax_qr"), "tax_printed": r.get("tax_printed"), "tax_src": r.get("tax_src"),
-    }
-
-
-def write_vendor_lists(docs: list[dict], tag: str) -> tuple[Path, Path]:
-    """vendor-pending(統編有效未建檔,依統編彙總)與 no-taxid(沒有有效賣方統編)。docs 需已帶 res(resolve_tax_id 結果)。"""
-    VENDOR_PENDING_OUT.mkdir(parents=True, exist_ok=True)
-    groups: dict[str, list[dict]] = defaultdict(list)
-    no_tax = []
-    for d in docs:
-        d.setdefault("res", resolve_tax_id(d.get("tax_qr"), d.get("tax_printed"), d.get("tax"), d.get("tax_src")))
-        (groups[d["res"]["tax_id"]] if d["res"]["tax_id"] else no_tax).append(d)
-    vp = VENDOR_PENDING_OUT / f"vendor-pending_{tag}.tsv"
-    with open(vp, "w", newline="") as f:
-        w = csv.writer(f, delimiter="\t")
-        w.writerow(["賣方統編", "統編來源(QR/印字/無法辨識)", "OCR 原始店名(僅供參考)", "單據數", "DOC ID 清單", "日期範圍", "合計金額", "目前 NAS 路徑", "備註"])
-        for tax_id, g in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-            dates = sorted(d["date"] for d in g if d.get("date"))
-            names = sorted({d["ocr_name"] for d in g if d.get("ocr_name")})
-            srcs = sorted({TAX_SOURCE_LABELS[d["res"]["source"]] for d in g})
-            notes = sorted({d["note"] for d in g if d.get("note")} | {d["res"]["note"] for d in g if d["res"]["note"]})
-            total = sum(int(d["amount"]) for d in g if d.get("amount") not in (None, ""))
-            w.writerow([tax_id, "/".join(srcs), "、".join(names), len(g), ",".join(sorted(d["id"] for d in g)),
-                        f"{dates[0]}~{dates[-1]}" if dates else "", fmt_amount(total), " | ".join(sorted(d["local_path"] for d in g if d["local_path"])),
-                        ";".join(notes)])
-    nt = VENDOR_PENDING_OUT / f"no-taxid_{tag}.tsv"
-    with open(nt, "w", newline="") as f:
-        w = csv.writer(f, delimiter="\t")
-        w.writerow(["doc_id", "status", "統編狀況", "OCR 原始店名(僅供參考)", "日期", "金額", "目前 NAS 路徑", "備註"])
-        for d in sorted(no_tax, key=lambda d: d["id"]):
-            w.writerow([d["id"], d["status"], d["res"]["note"], d.get("ocr_name") or "", d.get("date") or "", nt_amount(d.get("amount")),
-                        d["local_path"], d.get("note") or ""])
-    return vp, nt
-
-
 
 
 PLAN_FIELDS = ["doc_id", "from", "to", "sha256", "subject", "year", "category", "tag", "note"]

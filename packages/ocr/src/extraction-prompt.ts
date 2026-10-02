@@ -76,8 +76,8 @@ const CLASSIFICATION_CONFIDENCE_VALUES = ["high", "medium", "low"] as const;
 export function buildExtractionPrompt(embeddedText?: string): string {
   const schema = `{
   "docTypeCode": "INV(發票) | WAR(保證書) | RET(收據) | DEL(出貨單) | ORD(訂單) | SUB(訂閱/帳單) | MAN(說明書)",
-  "vendorNameRaw": "供應商/店家名稱,原文照抄,不要翻譯或簡化",
-  "vendorTaxId": "供應商統一編號,8 碼數字,查無則為 null",
+  "vendorNameRaw": "供應商/店家名稱(發票所載營業人全名),原文照抄,不要翻譯或簡化。只供人工參考,不用於命名或供應商比對",
+  "vendorTaxId": "賣方統一編號,8 碼數字。電子發票優先讀左側 QR Code 內的賣方統編,讀不到才用票面「賣方」欄印字;都讀不到則為 null,不要從店名或商標推測",
   "buyerTaxId": "購買商家統一編號(我方公司統編),單據非開立給公司(僅個人抬頭/無抬頭)則為 null",
   "accountNumber": "服務類帳號(水號/電號/瓦斯號/手機門號/寬頻設備碼等),查無則為 null",
   "contractNumber": "合約/保單編號(勞健保等非服務帳號類),查無則為 null,跟 accountNumber 通常只會有其中一個",
