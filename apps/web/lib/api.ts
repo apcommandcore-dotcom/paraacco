@@ -110,6 +110,10 @@ export interface DocumentRow {
   vendorName?: string | null;
   /** matched | pending | taxid_unreadable(document_extracted_fields.vendor_status)。 */
   vendorStatus?: string | null;
+  /** 所屬物件與角色(2026-09-29):primary = 主文件、supporting = 附件(attachmentRole 標類型)。 */
+  purchaseId?: string | null;
+  purchaseRelation?: "primary" | "supporting" | null;
+  attachmentRole?: string | null;
   vendorId: string | null;
   ocrConfidence: number | null;
   // 使用者可編輯的顯示名稱(2026-09-18)—— 分類 pipeline 只在這欄還是 null 時,用 OCR
@@ -177,6 +181,8 @@ export interface PurchaseRow {
   id: string;
   ownership: string;
   vendorNameRaw: string;
+  invoiceNo?: string | null;
+  orderNo?: string | null;
   summary: string;
   amountCents: number;
   currency: string;
@@ -536,4 +542,244 @@ export function displayVendor(doc: { vendorName?: string | null; vendorNameRaw?:
   if (doc.vendorName) return { name: doc.vendorName, registered: true };
   return { name: doc.vendorNameRaw ?? "—", registered: false };
 }
+
+// ---------------------------------------------------------------------------
+// 物件(採購案)= 一筆消費(2026-09-29,CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md)
+// ---------------------------------------------------------------------------
+export const ATTACHMENT_ROLE_LABELS: Record<string, string> = {
+  DEL: "出貨單",
+  RET: "收據",
+  ORD: "訂單",
+  SIGN: "簽單",
+  MAN: "說明書",
+  WAR: "保固單",
+  PHOTO: "照片",
+  OTHER: "其他",
+};
+export const ATTACHMENT_ROLES = Object.keys(ATTACHMENT_ROLE_LABELS);
+export const DOC_KIND_LABELS: Record<string, string> = {
+  invoice: "發票",
+  receipt: "收據",
+  delivery: "出貨單",
+  order: "訂單",
+  manual: "說明書",
+  warranty: "保固書",
+  other: "其他",
+};
+export const MERGE_RULE_LABELS: Record<number, string> = {
+  1: "同一發票號碼(重複檔)",
+  2: "訂單號/出貨單號相同,或印有發票號碼",
+  3: "同賣方統編 + 同金額 + 7 天內",
+  4: "統編缺漏,店名相近 + 同金額 + 同一天",
+  5: "說明書/保固單:同品牌型號或序號",
+};
+
+export interface PurchaseItemRow {
+  id: string;
+  purchaseId: string;
+  lineNo: number;
+  name: string;
+  quantity: number;
+  unitPriceCents: number | null;
+  amountCents: number;
+  brand: string | null;
+  model: string | null;
+  serialNo: string | null;
+  ownership: OwnershipScope | null;
+  warrantyStartDate: string | null;
+  warrantyEndDate: string | null;
+  source: "invoice_line" | "manual" | "split";
+  note: string | null;
+  // 2026-10-01(V1.02 7.2、7.5)品項右鍵管理
+  categoryId?: string | null;
+  categorySource?: "manual" | "rule" | null;
+  projectCode?: string | null;
+  isAdvance?: boolean;
+  advancePayee?: string | null;
+  advanceSettledAt?: string | null;
+  excludeFromReport?: boolean;
+  excludeReason?: string | null;
+  nameOriginal?: string | null;
+}
+
+export interface ItemCategory {
+  id: string;
+  name: string;
+  code: string | null;
+  parentId: string | null;
+  accountTitle: string | null;
+  defaultOwnership: OwnershipScope | null;
+  isActive: boolean;
+  sortOrder: number;
+  color: string | null;
+  usedCount?: number;
+}
+
+export interface AdvancePayee {
+  id: string;
+  name: string;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface ItemRule {
+  id: number;
+  vendorTaxId: string;
+  nameKeyword: string | null;
+  categoryId: string | null;
+  ownership: OwnershipScope | null;
+  projectCode: string | null;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface AdvanceItem extends PurchaseItemRow {
+  purchaseDate: string;
+  vendorName: string | null;
+  payeeName: string | null;
+}
+
+export interface ObjectDocument {
+  documentId: string;
+  relationKind: "primary" | "supporting";
+  attachmentRole: string | null;
+  purchaseItemId: string | null;
+  kind: string;
+  status: string | null;
+  ownership: OwnershipScope | null;
+  amountCents: number | null;
+  invoiceNo: string | null;
+  date: string | null;
+  vendorName: string | null;
+  vendorNameRaw: string | null;
+  displayName: string | null;
+  localPath: string | null;
+}
+
+export interface ObjectAttachment {
+  id: number;
+  purchaseId: string;
+  purchaseItemId: string | null;
+  kind: "video" | "photo" | "other";
+  localPath: string;
+  originalFileName: string | null;
+  byteSize: number | null;
+  note: string | null;
+}
+
+export interface ObjectDetail {
+  purchase: PurchaseRow;
+  primary: ObjectDocument | null;
+  documents: ObjectDocument[];
+  items: Array<PurchaseItemRow & { effectiveOwnership: OwnershipScope; documentIds: string[]; attachmentIds: number[] }>;
+  attachments: ObjectAttachment[];
+  flags: { mixedOwnership: boolean; itemAmountMismatch: boolean; mixedOwnershipWarning: boolean; cutoff: string; ownershipConflicts: string[] };
+}
+
+export interface MergeCandidate {
+  rule: number;
+  note: string;
+  uncertain: boolean;
+  duplicate: boolean;
+  documentId: string;
+  purchaseId: string | null;
+  otherKind: string;
+  otherOwnership: OwnershipScope;
+  otherAmountCents: number | null;
+  otherDate: string | null;
+  otherVendorName: string | null;
+  otherInvoiceNo: string | null;
+  suggestedRole: string;
+  itemLineNo: number | null;
+  ownershipConflict: boolean;
+}
+
+export interface MergeCandidatesResponse {
+  documentId: string;
+  currentPurchaseId: string | null;
+  candidates: MergeCandidate[];
+}
+
+export interface ReportRowItem {
+  id: string;
+  lineNo: number;
+  name: string;
+  quantity: number;
+  unitPriceCents: number | null;
+  amountCents: number;
+  ownership: string | null;
+  effectiveOwnership: string;
+  attachmentCount: number;
+  // 2026-10-01(V1.02 7.5)
+  purchaseId?: string;
+  categoryId?: string | null;
+  categorySource?: "manual" | "rule" | null;
+  projectCode?: string | null;
+  isAdvance?: boolean;
+  advancePayee?: string | null;
+  advanceSettledAt?: string | null;
+  excludeFromReport?: boolean;
+  excludeReason?: string | null;
+  nameOriginal?: string | null;
+}
+
+export interface ReportRow {
+  key: string;
+  purchaseId: string | null;
+  primaryDocumentId: string;
+  date: string | null;
+  vendor: string;
+  vendorRegistered: boolean;
+  invoiceNo: string | null;
+  ownership: string;
+  status: string;
+  amountCents: number | null;
+  segment: "recurring" | "general";
+  recurringSeriesId: string | null;
+  attachmentSummary: string;
+  attachmentDocumentIds: string[];
+  items: ReportRowItem[];
+  mixedOwnership: boolean;
+  itemAmountMismatch: boolean;
+  needsConfirm: boolean;
+  ownershipSplit: Record<string, number>;
+}
+
+export interface ReportSubtotals {
+  byOwnership: Record<string, { count: number; cents: number }>;
+  count: number;
+  cents: number;
+}
+
+export interface MonthlyReportResponse {
+  month: string;
+  recurring: { rows: ReportRow[]; subtotals: ReportSubtotals };
+  general: { rows: ReportRow[]; subtotals: ReportSubtotals };
+  total: ReportSubtotals;
+  pendingConfirm: string[];
+  missingAmount: number;
+  noDate: number;
+  cutoff: string;
+  // 2026-10-01(V1.02 7.5)依費用類別/專案小計("__none__" = 未分類/不屬於專案);代墊、不列帳分列
+  byCategory?: Record<string, number>;
+  byProject?: Record<string, number>;
+  advanceItems?: ReportItemListEntry[];
+  excludedItems?: ReportItemListEntry[];
+  categoryNames?: Record<string, string>;
+  payeeNames?: Record<string, string>;
+}
+
+export interface ReportItemListEntry {
+  itemId: string;
+  purchaseId: string;
+  primaryDocumentId: string;
+  date: string | null;
+  vendor: string;
+  name: string;
+  amountCents: number;
+  advancePayee?: string | null;
+  reason?: string | null;
+}
+
+export const UNCATEGORIZED_KEY = "__none__";
 

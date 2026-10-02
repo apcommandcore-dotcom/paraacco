@@ -89,7 +89,7 @@ export function buildExtractionPrompt(embeddedText?: string): string {
   "invoiceNo": "發票號碼,查無則為 null",
   "orderNo": "訂單號碼,查無則為 null",
   "serialNo": "商品序號或 IMEI,查無則為 null",
-  "brand": "商品品牌,查無則為 null",
+  "brand": "招牌/品牌,只在與賣方名稱(vendorNameRaw)不同時才填(例:營業人「統康生活事業股份有限公司 雨聲分公司」、招牌「家樂福」);招牌就是賣方名稱的一部分(例:賣方「金菊雞肉飯-德行東天母店」、招牌「金菊雞肉飯」)時填 null",
   "model": "商品型號,查無則為 null",
   "itemName": "這份單據記錄的品項或服務內容,一句話描述,≤30 字,例如「MacBook Pro 14 吋」「2026 年 7-8 月電費」「Adobe Creative Cloud 年繳訂閱」,不是供應商/對象名稱,查無則為 null",
   "amount": "總金額數字(元,不含幣別符號、不含千分位逗號),退款/折讓用負數,查無則為 null",

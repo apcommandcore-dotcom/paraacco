@@ -64,6 +64,7 @@ CF_ENV = Path(os.environ.get("CF_ENV", HOME / ".config/paraacco-batch/batch_inge
 WB_TOKEN_FILE = Path(os.environ.get("WB_TOKEN_FILE", HOME / ".config/paraacco-batch/extraction_writeback.token"))
 BACKFILL = HOME / "dev/_reports/paraacco/backfill-20260926"
 EXTRACTION = HOME / "dev/_reports/paraacco/extraction-20260926"
+VENDOR_PENDING_OUT = Path(os.environ.get("VENDOR_PENDING_OUT", HOME / "dev/_reports/paraacco/vendor-pending"))
 BATCH_SIZE = min(int(os.environ.get("BATCH_SIZE", "50")), 50)  # API 上限 50
 TZ = dt.timezone(dt.timedelta(hours=8))
 
@@ -140,6 +141,21 @@ def short_counterparty(name: str | None) -> str:
 # ---------------------------------------------------------------------------
 TAX_WEIGHTS = (1, 2, 1, 2, 1, 2, 4, 1)
 TAX_SOURCE_LABELS = {"qr": "QR", "printed": "印字", "unreadable": "無法辨識"}
+
+
+def normalize_tax_id(v) -> str:
+    return re.sub(r"[\s-]", "", str(v or "")).strip()
+
+
+def is_valid_tax_id(v) -> bool:
+    t = normalize_tax_id(v)
+    if not re.fullmatch(r"\d{8}", t):
+        return False
+    z = 0
+    for i, w in enumerate(TAX_WEIGHTS):
+        p = int(t[i]) * w
+        z += p // 10 + p % 10
+    return z % 5 == 0 or (t[6] == "7" and (z + 1) % 5 == 0)
 
 
 def resolve_tax_id(qr=None, printed=None, legacy=None, legacy_source=None) -> dict:
@@ -407,7 +423,7 @@ def plan_migration(args) -> None:
 # ---------------------------------------------------------------------------
 def plan_api(args) -> None:
     client = ApiClient()
-    rows, after = [], ""
+    rows, after, pending = [], "", []
     while True:
         res = client.get(f"/archive/documents?after={after}&limit=500")
         for d in res["documents"]:
@@ -434,7 +450,8 @@ def plan_api(args) -> None:
         after = res.get("next")
         if not after:
             break
-    plan_path = OUT / f"archive-plan-{now_tag()}.tsv"
+    tag = now_tag()
+    plan_path = OUT / f"archive-plan-{tag}.tsv"
     OUT.mkdir(parents=True, exist_ok=True)
     write_plan(plan_path, rows)
     summarize(plan_path, rows)
@@ -470,6 +487,10 @@ def snapshot_doc_to_audit(r: dict) -> dict:
     }
 
 
+def nt_amount(cents) -> str:
+    return "" if cents in (None, "") else fmt_amount(cents)
+
+
 def write_vendor_lists(docs: list[dict], tag: str) -> tuple[Path, Path]:
     """vendor-pending(統編有效未建檔,依統編彙總)與 no-taxid(沒有有效賣方統編)。docs 需已帶 res(resolve_tax_id 結果)。"""
     VENDOR_PENDING_OUT.mkdir(parents=True, exist_ok=True)
@@ -501,6 +522,164 @@ def write_vendor_lists(docs: list[dict], tag: str) -> tuple[Path, Path]:
     return vp, nt
 
 
+def load_rows(path: str) -> list[dict]:
+    data = json.loads(Path(path).read_text())
+    return data[0]["results"] if isinstance(data, list) else data.get("results", data)
+
+
+def plan_audit(args) -> None:
+    """已歸檔檔名的對象段 vs 主檔名稱。--d1-json(唯讀 SELECT 快照)+ --vendors-json;沒給就從 API 讀。"""
+    if args.d1_json:
+        if not args.vendors_json:
+            raise SystemExit("--source audit --d1-json 需要一起給 --vendors-json")
+        docs = [snapshot_doc_to_audit(r) for r in load_rows(args.d1_json)]
+        vendor_rows = load_rows(args.vendors_json)
+        by_tax = {normalize_tax_id(v["tax_id"]): v for v in vendor_rows if v.get("tax_id")}
+        by_id = {v["id"]: v for v in vendor_rows}
+    else:
+        client, docs, after = ApiClient(), [], ""
+        while True:
+            res = client.get(f"/archive/documents?after={after}&limit=500")
+            docs += [api_doc_to_audit(d) for d in res["documents"]]
+            after = res.get("next")
+            if not after:
+                break
+        by_tax, by_id = None, {}
+    docs = [d for d in docs if d["status"] not in EXCLUDED_STATUSES and not d["local_path"].startswith(OUTSIDE_ROOT + "/")]
+
+    rename, links, unmatched, old_rule, skipped = [], [], [], [], []
+    for d in docs:
+        d["res"] = resolve_tax_id(d.get("tax_qr"), d.get("tax_printed"), d.get("tax"), d.get("tax_src"))
+        if by_tax is not None:
+            v = by_tax.get(d["res"]["tax_id"]) if d["res"]["tax_id"] else None
+            vendor_id, vendor_name = (v["id"], v["name"]) if v else (None, None)
+        else:
+            vendor_id, vendor_name = d.get("vendor_id"), d.get("vendor_name")
+        if d.get("vendor_id") and d.get("vendor_id") != vendor_id:
+            old = by_id.get(d["vendor_id"], {}).get("name", d["vendor_id"])
+            d["note"] = f"線上 vendorId={d['vendor_id']}({old})是舊規則以名稱對應,統編{'未建檔' if d['res']['tax_id'] else '無法辨識'}"
+            old_rule.append(d)
+        if not vendor_id:
+            unmatched.append(d)
+            continue
+        if d.get("vendor_id") != vendor_id:
+            links.append((d["id"], vendor_id, vendor_name, d["res"]["tax_id"]))
+        if not FILED_RE.match(d["local_path"]):
+            continue  # 還在 00_收件(或 90_無法處理):歸檔時就會用主檔名稱,不用改名
+        if "_附件_" in d["local_path"].rsplit("/", 1)[-1]:
+            continue  # 物件附件跟著主文件命名(--source attachments),不用對象段
+        seg = filename_counterparty(d["local_path"])
+        want = short_counterparty(vendor_name)
+        if seg is None:
+            skipped.append((d["id"], d["local_path"], "檔名不是 YYYYMMDD_類型_對象_金額_DOC 格式"))
+            continue
+        if seg == want:
+            continue
+        to = replace_counterparty(d["local_path"], want)
+        parts = to.split("/")
+        rename.append({
+            "doc_id": d["id"], "from": d["local_path"], "to": to, "sha256": d["sha256"], "subject": parts[1], "year": parts[2],
+            "category": parts[3], "tag": "", "note": f"對象「{seg}」→ 主檔「{vendor_name}」(統編 {d['res']['tax_id']},來源 {TAX_SOURCE_LABELS[d['res']['source']]})",
+        })
+
+    tag = now_tag()
+    VENDOR_PENDING_OUT.mkdir(parents=True, exist_ok=True)
+    rp = VENDOR_PENDING_OUT / f"rename-plan_{tag}.tsv"
+    write_plan(rp, rename)
+    vp, nt = write_vendor_lists(unmatched, tag)
+    sql_path = VENDOR_PENDING_OUT / f"vendor-link-updates_{tag}.sql"
+    sql_path.write_text(
+        "-- archive.py {} --source audit 產生:統編已建檔、線上 vendorId 還沒指到主檔的文件(D1 寫入,Theo 確認後才執行)。共 {} 句。\n{}\n".format(
+            VERSION, len(links),
+            "\n".join(
+                "UPDATE documents SET vendor_id = '{}', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = '{}'; -- {} {}".format(
+                    vid.replace("'", "''"), doc_id, tax_id, name) for doc_id, vid, name, tax_id in links)))
+    if old_rule:
+        orp = VENDOR_PENDING_OUT / f"old-rule-vendor-matches_{tag}.tsv"
+        with open(orp, "w", newline="") as f:
+            w = csv.writer(f, delimiter="\t")
+            w.writerow(["doc_id", "status", "線上 vendorId", "賣方統編", "OCR 店名", "NAS 路徑", "說明"])
+            for d in old_rule:
+                w.writerow([d["id"], d["status"], d["vendor_id"], d["res"]["tax_id"] or d["res"]["raw"], d.get("ocr_name") or "", d["local_path"], d["note"]])
+        print(f"舊規則(名稱)對應、統編對不上主檔:{len(old_rule)} 份 → {orp}")
+    if skipped:
+        sp = VENDOR_PENDING_OUT / f"rename-skipped_{tag}.tsv"
+        with open(sp, "w", newline="") as f:
+            csv.writer(f, delimiter="\t").writerows([("doc_id", "local_path", "reason"), *skipped])
+        print(f"檔名格式無法解析:{len(skipped)} 份 → {sp}")
+    print(f"檢查 {len(docs)} 份(排除 ignored/dup、_系統外資料)")
+    print(f"rename-plan:{rp}({len(rename)} 筆,確認後執行:python3 archive.py --apply {rp})")
+    print(f"vendor-pending:{vp}({len({d['res']['tax_id'] for d in unmatched if d['res']['tax_id']})} 個統編)")
+    print(f"no-taxid:{nt}({sum(1 for d in unmatched if not d['res']['tax_id'])} 份)")
+    print(f"vendor-link SQL:{sql_path}({len(links)} 句)")
+
+
+# ---------------------------------------------------------------------------
+# 計畫:物件附件改名(V1.03)
+# ---------------------------------------------------------------------------
+ATTACHMENT_ROLE_LABELS = {"DEL": "出貨單", "RET": "收據", "ORD": "訂單", "SIGN": "簽單", "MAN": "說明書", "WAR": "保固單", "PHOTO": "照片", "OTHER": "其他"}
+ATTACHMENT_KIND_LABELS = {"video": "影片", "photo": "照片", "other": "其他"}
+
+
+def attachment_target(primary_path: str, label: str, seq: int, src_path: str) -> str:
+    folder, name = primary_path.rsplit("/", 1)
+    stem = name.rsplit(".", 1)[0]
+    ext = src_path.rsplit(".", 1)[-1] if "." in src_path.rsplit("/", 1)[-1] else "bin"
+    return f"{folder}/{stem}_附件_{label}_{seq:02d}.{ext}"
+
+
+def plan_attachments(args) -> None:
+    client = ApiClient()
+    res = client.get("/archive/objects")
+    by_obj: dict[str, list[dict]] = defaultdict(list)
+    for l in res["links"]:
+        by_obj[l["purchaseId"]].append(l)
+    atts_by_obj: dict[str, list[dict]] = defaultdict(list)
+    for a in res["attachments"]:
+        atts_by_obj[a["purchaseId"]].append(a)
+    rows, skipped = [], []
+    for pid in sorted(set(by_obj) | set(atts_by_obj)):
+        links = by_obj.get(pid, [])
+        primary = next((l for l in links if l["relationKind"] == "primary"), None)
+        if not primary or not primary.get("localPath"):
+            skipped.append((pid, "", "物件沒有主文件或主文件沒有 NAS 路徑"))
+            continue
+        ppath = primary["localPath"]
+        if not FILED_RE.match(ppath):
+            skipped.append((pid, ppath, "主文件還沒歸檔(不在 10/20/30/80 正式位置),歸檔後再產生"))
+            continue
+        seq: dict[str, int] = defaultdict(int)
+        items = [(l["documentId"], ATTACHMENT_ROLE_LABELS.get(l.get("attachmentRole") or "OTHER", "其他"), l.get("localPath"), l.get("sha256"), l.get("storage"))
+                 for l in sorted(links, key=lambda x: x["documentId"]) if l["relationKind"] != "primary"]
+        items += [(f"ATT-{a['id']}", ATTACHMENT_KIND_LABELS.get(a["kind"], "其他"), a["localPath"], a.get("sha256"), "local")
+                  for a in sorted(atts_by_obj.get(pid, []), key=lambda x: x["id"])]
+        for doc_id, label, src, sha, storage in items:
+            seq[label] += 1
+            if not src or storage != "local":
+                skipped.append((doc_id, src or "", "原始檔不在 NAS(storage≠local)"))
+                continue
+            to = attachment_target(ppath, label, seq[label], src)
+            if src == to:
+                continue
+            if not sha:
+                try:
+                    sha = sha256_file(abs_path(src))
+                except (OSError, ValueError) as e:
+                    skipped.append((doc_id, src, f"讀不到檔案算 SHA-256:{e}"))
+                    continue
+            parts = to.split("/")
+            rows.append({"doc_id": doc_id, "from": src, "to": to, "sha256": sha, "subject": parts[1], "year": parts[2], "category": parts[3],
+                         "tag": label, "note": f"物件 {pid} 附件;主文件 {primary['documentId']}"})
+    tag = now_tag()
+    OUT.mkdir(parents=True, exist_ok=True)
+    plan_path = OUT / f"attachment-plan-{tag}.tsv"
+    write_plan(plan_path, rows)
+    summarize(plan_path, rows)
+    if skipped:
+        sp = OUT / f"attachment-skipped-{tag}.tsv"
+        with open(sp, "w", newline="") as f:
+            csv.writer(f, delimiter="\t").writerows([("id", "local_path", "reason"), *skipped])
+        print(f"略過 {len(skipped)} 筆 → {sp}")
 
 
 PLAN_FIELDS = ["doc_id", "from", "to", "sha256", "subject", "year", "category", "tag", "note"]
@@ -595,14 +774,14 @@ def done_ids(plan_name: str) -> set[str]:
     ids = set()
     for p in OUT.glob("archive-done-*.tsv"):
         for r in csv.reader(open(p), delimiter="\t"):
-            if len(r) >= 6 and r[0].startswith("DOC-") and r[5] == plan_name:
+            if len(r) >= 6 and (r[0].startswith("DOC-") or r[0].startswith("ATT-")) and r[5] == plan_name:
                 ids.add(r[0])
     return ids
 
 
 def moves_today() -> int:
     p = OUT / f"archive-done-{today()}.tsv"
-    return sum(1 for r in csv.reader(open(p), delimiter="\t") if r and r[0].startswith("DOC-")) if p.exists() else 0
+    return sum(1 for r in csv.reader(open(p), delimiter="\t") if r and (r[0].startswith("DOC-") or r[0].startswith("ATT-"))) if p.exists() else 0
 
 
 def move_file(src_rel: str, dst_rel: str, sha: str) -> None:
@@ -631,14 +810,22 @@ def undo_files(moved: list[tuple[str, str, str]], log) -> list[str]:
     return stuck
 
 
+def is_att(r: dict) -> bool:
+    return r["doc_id"].startswith("ATT-")
+
+
 def reconcile(client: ApiClient, batch: list[dict], moved: list[tuple[str, str, str]], log) -> str:
     """回寫回應不明時,以線上 local_path 為準。回傳 'committed' | 'reverted' | 'uncertain'。"""
     try:
-        res = client.get("/archive/documents?ids=" + ",".join(r["doc_id"] for r in batch))
+        if is_att(batch[0]):
+            res = client.get("/archive/objects")
+            online = {f"ATT-{a['id']}": a.get("localPath") for a in res["attachments"]}
+        else:
+            res = client.get("/archive/documents?ids=" + ",".join(r["doc_id"] for r in batch))
+            online = {d["documentId"]: d.get("localPath") for d in res["documents"]}
     except ApiError as e:
         log(f"RECONCILE_FAIL 無法查詢線上狀態:{e}")
         return "uncertain"
-    online = {d["documentId"]: d.get("localPath") for d in res["documents"]}
     if all(online.get(r["doc_id"]) == r["to"] for r in batch):
         return "committed"
     if all(online.get(r["doc_id"]) == r["from"] for r in batch):
@@ -662,18 +849,20 @@ def apply_plan(plan_path: Path, max_writes: int, log) -> int:
         save_state(plan=str(plan_path), status="daily_limit", at=now_tag())
         return 0
 
-    # 同一個檔案的多筆(dup 文件)必須同一批;以檔案為單位分批。
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for r in pending:
-        groups[r["from"]].append(r)
-    batches, cur = [], []
-    for g in groups.values():
-        if cur and len(cur) + len(g) > BATCH_SIZE:
+    # 同一個檔案的多筆(dup 文件)必須同一批;以檔案為單位分批。V1.03:物件附件(ATT-*)跟文件分開成批,各走各的回寫端點。
+    batches = []
+    for kind_rows in ([r for r in pending if not is_att(r)], [r for r in pending if is_att(r)]):
+        groups: dict[str, list[dict]] = defaultdict(list)
+        for r in kind_rows:
+            groups[r["from"]].append(r)
+        cur: list[dict] = []
+        for g in groups.values():
+            if cur and len(cur) + len(g) > BATCH_SIZE:
+                batches.append(cur)
+                cur = []
+            cur.extend(g)
+        if cur:
             batches.append(cur)
-            cur = []
-        cur.extend(g)
-    if cur:
-        batches.append(cur)
 
     client = ApiClient()
     tag = f"{now_tag()}-{os.getpid()}"  # 同一秒內連續執行(例如回滾)不會共用同一個 ROLLBACK 檔
@@ -703,10 +892,15 @@ def apply_plan(plan_path: Path, max_writes: int, log) -> int:
             save_state(plan=str(plan_path), status="move_failed" if not stuck else "uncertain", stuck=stuck, at=now_tag())
             return 1
 
-        body = {"moves": [{"documentId": r["doc_id"], "fromPath": r["from"], "toPath": r["to"], "sha256": r["sha256"]} for r in batch]}
+        if is_att(batch[0]):
+            endpoint = "/archive/attachment-moves"
+            body = {"moves": [{"attachmentId": int(r["doc_id"][4:]), "fromPath": r["from"], "toPath": r["to"], "sha256": r["sha256"]} for r in batch]}
+        else:
+            endpoint = "/archive/moves"
+            body = {"moves": [{"documentId": r["doc_id"], "fromPath": r["from"], "toPath": r["to"], "sha256": r["sha256"]} for r in batch]}
         outcome = "committed"
         try:
-            client.post("/archive/moves", body)
+            client.post(endpoint, body)
         except ApiError as e:
             if e.status is None or e.status >= 500 and e.status != 503:
                 log(f"WRITEBACK_UNCLEAR {e};以線上紀錄對帳")
@@ -778,8 +972,10 @@ def resume(max_writes: int, log) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="paraacco NAS 原始檔歸檔(先出計畫,確認後 --apply)")
-    ap.add_argument("--source", choices=["migration", "api"], help="產生計畫的來源")
-    ap.add_argument("--d1-json", help="--source migration 用的 D1 唯讀快照(wrangler d1 execute --json 輸出)")
+    ap.add_argument("--source", choices=["migration", "api", "audit", "attachments"],
+                    help="產生計畫的來源;audit = 回溯檢查檔名對象(只列不動);attachments = 物件附件改名計畫")
+    ap.add_argument("--d1-json", help="--source migration/audit 用的 D1 唯讀快照(wrangler d1 execute --json 輸出)")
+    ap.add_argument("--vendors-json", help="--source audit --d1-json 時的供應商主檔快照(SELECT id, name, tax_id FROM vendors)")
     ap.add_argument("--decisions", help="Theo 逐筆歸屬決定 CSV(doc, decision 欄),例:ownership-decision_20260928_V1.02.csv")
     ap.add_argument("--apply", metavar="PLAN_TSV", help="執行已確認的計畫")
     ap.add_argument("--resume", action="store_true", help="接續上次(D1 額度用完、中斷)")
@@ -811,6 +1007,12 @@ def main() -> int:
         return 0
     if args.source == "api":
         plan_api(args)
+        return 0
+    if args.source == "audit":
+        plan_audit(args)
+        return 0
+    if args.source == "attachments":
+        plan_attachments(args)
         return 0
     ap.print_help()
     return 2

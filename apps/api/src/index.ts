@@ -28,6 +28,10 @@ import { batchImportRoute } from "./routes/batch-import";
 import { extractionWritebackRoute } from "./routes/extraction-writeback";
 import { archiveRoute } from "./routes/archive";
 import { recurringRoute } from "./routes/recurring";
+import { purchaseItemsRoute } from "./routes/purchase-items";
+import { reportsRoute } from "./routes/reports";
+import { settingsRoute } from "./routes/settings";
+import { advancePayeesRoute, itemCategoriesRoute, itemRulesRoute } from "./routes/item-admin";
 import { createDb } from "@paraacco/db";
 import { handleScheduled } from "./scheduled";
 
@@ -94,6 +98,14 @@ app.route("/api/projects", projectsRoute);
 app.route("/api/statement-lines", statementLinesRoute);
 app.route("/api/case-links", caseLinksRoute);
 app.route("/api/recurring", recurringRoute);
+// 2026-09-29 物件品項/月報表/系統設定(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md)
+app.route("/api/purchase-items", purchaseItemsRoute);
+app.route("/api/reports", reportsRoute);
+app.route("/api/settings", settingsRoute);
+// 2026-10-01 品項類別/自動規則/代墊請款對象(CODE_TASK_purchase-object-merge-docs_20260929_V1.02.md 7.3、7.4)
+app.route("/api/item-categories", itemCategoriesRoute);
+app.route("/api/item-rules", itemRulesRoute);
+app.route("/api/advance-payees", advancePayeesRoute);
 
 // 每日批次進件(排程腳本呼叫,不是人類使用者也不是 document-worker)—— 共用密鑰驗證,
 // 見 middleware/batch-auth.ts、routes/batch-import.ts 開頭註解(含 Cloudflare Access

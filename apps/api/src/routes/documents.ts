@@ -25,6 +25,7 @@ import {
 } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
+import { attachDocument, ObjectError } from "../purchase-objects";
 
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -51,6 +52,10 @@ documentsRoute.get("/", async (c) => {
     // vendorId 為空(統編未建檔/無法辨識)時前端才退回 OCR 店名並標「未建檔」。
     vendorName: sql<string | null>`(SELECT v.name FROM vendors v WHERE v.id = "documents"."vendor_id")`,
     vendorStatus: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'vendor_status')`,
+    // 2026-09-29(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md):所屬物件與角色——列表把附件收在主文件底下。
+    purchaseId: sql<string | null>`(SELECT l.purchase_id FROM document_purchase_links l WHERE l.document_id = "documents"."id" AND l.relation_kind <> 'duplicate_evidence' LIMIT 1)`,
+    purchaseRelation: sql<string | null>`(SELECT l.relation_kind FROM document_purchase_links l WHERE l.document_id = "documents"."id" AND l.relation_kind <> 'duplicate_evidence' LIMIT 1)`,
+    attachmentRole: sql<string | null>`(SELECT l.attachment_role FROM document_purchase_links l WHERE l.document_id = "documents"."id" AND l.relation_kind <> 'duplicate_evidence' LIMIT 1)`,
   };
   const rows = conditions.length
     ? await db
@@ -248,13 +253,17 @@ documentsRoute.post("/:id/link", async (c) => {
   const now = new Date().toISOString();
 
   if (body.targetType === "purchase") {
-    await db.insert(documentPurchaseLinks).values({
-      documentId: id,
-      purchaseId: body.targetId,
-      relationKind: body.relationKind ?? "primary",
-      linkedBy: "manual",
-      createdByMemberId: auth.memberId,
-    });
+    // 2026-09-29:採購案 = 物件。走物件的加入規則(發票接手主文件、其餘當附件、一份文件只屬一個物件),
+    // 不再直接插一列 primary(會讓一個物件有兩份主文件)。relationKind 'primary' 以外的舊值忽略,由文件種類決定。
+    try {
+      await attachDocument(db, body.targetId, id, {
+        role: body.relationKind === "primary" ? "primary" : null,
+        actor: { memberId: auth.memberId, name: auth.name ?? auth.email ?? null },
+      });
+    } catch (err) {
+      if (err instanceof ObjectError) return c.json({ error: err.code, message: err.message }, err.status);
+      throw err;
+    }
   } else {
     await db.insert(documentAssetLinks).values({
       documentId: id,

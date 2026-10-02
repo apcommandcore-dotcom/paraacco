@@ -402,6 +402,12 @@ export const documentFiles = sqliteTable(
 );
 
 // 文件 ↔ 採購案 多對多(一份帳單/BIL 可能涵蓋多筆採購案)。
+//
+// 2026-09-29(migration 0011,CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md):採購案 = 「物件」= 一筆消費。
+// relation_kind 'primary' = 主文件(發票;沒有發票時收據/出貨單暫代)、'supporting' = 附件;附件類型存在
+// attachment_role(DEL/RET/ORD/SIGN/MAN/WAR/PHOTO/OTHER,見 @paraacco/domain ATTACHMENT_ROLES),掛在品項層的附件
+// (說明書/保固單…)另填 purchase_item_id。兩欄都是 ALTER TABLE ADD COLUMN,不重建表;purchase_item_id 刻意不宣告外鍵
+// (drizzle-kit 對既有表加外鍵會產生重建表 migration),只在應用層驗證。一份文件最多屬於一個物件(應用層保證)。
 export const documentPurchaseLinks = sqliteTable(
   "document_purchase_links",
   {
@@ -416,6 +422,8 @@ export const documentPurchaseLinks = sqliteTable(
     confidenceScore: integer("confidence_score"),
     createdByMemberId: text("created_by_member_id").references(() => members.id),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    attachmentRole: text("attachment_role"), // 附件類型;主文件為 null
+    purchaseItemId: text("purchase_item_id"), // 掛在品項層時的 purchase_items.id;物件層為 null
   },
   (t) => ({
     pk: primaryKey({ columns: [t.documentId, t.purchaseId] }),
@@ -425,6 +433,145 @@ export const documentPurchaseLinks = sqliteTable(
       sql`${t.relationKind} IN ('primary', 'supporting', 'duplicate_evidence')`,
     ),
     linkedByCheck: check("document_purchase_links_linked_by_check", sql`${t.linkedBy} IN ('manual', 'auto', 'import')`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 購買品項 —— 2026-09-29(migration 0011,CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md 第五節)。
+// 物件(purchases)底下的品項:發票每一行一個(不設金額門檻,折扣行也是一個負數品項),也可手動新增/拆分。
+// 金額與統計仍以物件(發票總額)為單位;品項小計只用在「品項金額不符」檢查,以及混合歸屬時公司/個人小計的拆分。
+// ownership 為 null = 跟著發票(物件)歸屬;逐項改歸屬時才填。說明書/保固單/影片可掛在品項層
+// (document_purchase_links.purchase_item_id、purchase_attachments.purchase_item_id)。保固起訖日記在品項上。
+// ---------------------------------------------------------------------------
+export const purchaseItems = sqliteTable(
+  "purchase_items",
+  {
+    id: text("id").primaryKey(), // PIT-YYYY-NNNNNN
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => purchases.id),
+    lineNo: integer("line_no").notNull().default(0),
+    name: text("name").notNull(),
+    quantity: real("quantity").notNull().default(1),
+    unitPriceCents: integer("unit_price_cents"),
+    amountCents: integer("amount_cents").notNull(), // 可為負(折扣行)
+    brand: text("brand"),
+    model: text("model"),
+    serialNo: text("serial_no"),
+    ownership: text("ownership"), // null = 跟發票;'per' | 'corp' | 'advance' | 'custody'
+    warrantyStartDate: text("warranty_start_date"),
+    warrantyEndDate: text("warranty_end_date"),
+    source: text("source").notNull().default("manual"), // 'invoice_line' | 'manual' | 'split'
+    note: text("note"),
+    // 2026-10-01(migration 0013,CODE_TASK_purchase-object-merge-docs_20260929_V1.02.md 7.2、7.5):品項右鍵管理。
+    categoryId: text("category_id"), // item_categories.id(不宣告外鍵:對既有表加外鍵 drizzle-kit 會重建表)
+    categorySource: text("category_source"), // 'manual' | 'rule'(自動規則套用,覆核頁可一鍵改回)
+    projectCode: text("project_code"), // AP_YYNNN
+    isAdvance: integer("is_advance", { mode: "boolean" }).notNull().default(false), // 代墊,待請款
+    advancePayee: text("advance_payee"), // advance_payees.id
+    advanceSettledAt: text("advance_settled_at"), // 已請回(對帳頁「未請回」清單用)
+    excludeFromReport: integer("exclude_from_report", { mode: "boolean" }).notNull().default(false), // 不列帳
+    excludeReason: text("exclude_reason"),
+    nameOriginal: text("name_original"), // 原始辨識品名(修正品名時保留)
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    purchaseIdx: index("purchase_items_purchase_idx").on(t.purchaseId, t.lineNo),
+    warrantyIdx: index("purchase_items_warranty_idx").on(t.warrantyEndDate),
+    ownershipCheck: check(
+      "purchase_items_ownership_check",
+      sql`${t.ownership} IS NULL OR ${t.ownership} IN ('per', 'corp', 'advance', 'custody')`,
+    ),
+    sourceCheck: check("purchase_items_source_check", sql`${t.source} IN ('invoice_line', 'manual', 'split')`),
+    quantityCheck: check("purchase_items_quantity_check", sql`${t.quantity} > 0`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 品項類別/自動規則/代墊請款對象 —— 2026-10-01(migration 0013,CODE_TASK_purchase-object-merge-docs_20260929_V1.02.md 7.3–7.5)。
+// 一律在管理後台維護,不寫死在程式;已被品項使用的類別只能停用不能刪除;子類別只有一層。
+// ---------------------------------------------------------------------------
+export const itemCategories = sqliteTable(
+  "item_categories",
+  {
+    id: text("id").primaryKey(), // ICT-NNN
+    name: text("name").notNull(),
+    code: text("code"),
+    parentId: text("parent_id"),
+    accountTitle: text("account_title"), // 對應會計科目(參考)
+    defaultOwnership: text("default_ownership"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+    color: text("color"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    ownershipCheck: check("item_categories_ownership_check", sql`${t.defaultOwnership} IS NULL OR ${t.defaultOwnership} IN ('per', 'corp', 'advance', 'custody')`),
+  }),
+);
+
+export const itemRules = sqliteTable(
+  "item_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    vendorTaxId: text("vendor_tax_id").notNull(),
+    nameKeyword: text("name_keyword"),
+    categoryId: text("category_id"),
+    ownership: text("ownership"),
+    projectCode: text("project_code"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    vendorIdx: index("item_rules_vendor_idx").on(t.vendorTaxId),
+  }),
+);
+
+export const advancePayees = sqliteTable("advance_payees", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// 品項右鍵套用的一批變更(Undo 最近一次用):before 存每個品項變更前的值。
+export const itemChangeBatches = sqliteTable("item_change_batches", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  itemIds: text("item_ids").notNull(), // JSON 陣列
+  changes: text("changes").notNull(), // JSON:這批套用的欄位
+  before: text("before").notNull(), // JSON:{ itemId: { 欄位: 舊值 } }
+  undoneAt: text("undone_at"),
+  actorMemberId: text("actor_member_id").references(() => members.id),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// 物件的非單據附件(開箱影片、照片)——2026-09-29(migration 0011)。原始檔只留 NAS(沿用「原始檔只留 NAS、線上只存
+// 資訊 + NAS 路徑」),不做 OCR、不進 documents。NAS 位置 = 主文件同資料夾、檔名 <主文件檔名去副檔名>_附件_影片_01.mp4,
+// 搬移/改名由 scripts/archive.py 出計畫,確認後才執行。local_path 相對於 LOCAL_ROOT。
+export const purchaseAttachments = sqliteTable(
+  "purchase_attachments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    purchaseId: text("purchase_id")
+      .notNull()
+      .references(() => purchases.id),
+    purchaseItemId: text("purchase_item_id").references(() => purchaseItems.id),
+    kind: text("kind").notNull(), // 'video' | 'photo' | 'other'
+    localPath: text("local_path").notNull(),
+    originalFileName: text("original_file_name"),
+    mimeType: text("mime_type"),
+    byteSize: integer("byte_size"),
+    sha256: text("sha256"),
+    note: text("note"),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    purchaseIdx: index("purchase_attachments_purchase_idx").on(t.purchaseId),
+    kindCheck: check("purchase_attachments_kind_check", sql`${t.kind} IN ('video', 'photo', 'other')`),
   }),
 );
 
@@ -900,6 +1047,17 @@ export const notifications = sqliteTable(
     severityCheck: check("notifications_severity_check", sql`${t.severity} IN ('info', 'warning', 'critical')`),
   }),
 );
+
+// ---------------------------------------------------------------------------
+// 系統設定 —— 2026-09-29(migration 0011)。目前只有 mixed_ownership_cutoff(混合歸屬警告截止日,預設 2026-10-01,
+// CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md 5.3)。key/value 純文字,合法值在 API 層驗證。
+// ---------------------------------------------------------------------------
+export const appSettings = sqliteTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedByMemberId: text("updated_by_member_id").references(() => members.id),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
 
 // ---------------------------------------------------------------------------
 // 人類可讀 ID 流水號 —— 應用層 upsert+1(見 sequences.ts)

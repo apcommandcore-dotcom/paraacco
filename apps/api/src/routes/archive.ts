@@ -18,9 +18,10 @@
 
 import { Hono } from "hono";
 import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
-import { activityLog, createDb, documentFiles, documentPurchaseLinks, documents, vendors } from "@paraacco/db";
+import { activityLog, createDb, documentFiles, documentPurchaseLinks, documents, purchaseAttachments, vendors } from "@paraacco/db";
 import { MANAGED_ROOT, validateLocalPath } from "@paraacco/shared";
 import type { Bindings } from "../bindings";
+import { createObject, ObjectError } from "../purchase-objects";
 
 export const archiveRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -167,6 +168,105 @@ archiveRoute.get("/documents", async (c) => {
     .limit(ids ? MAX_MOVES_PER_BATCH : limit);
 
   return c.json({ documents: rows, next: !ids && rows.length === limit ? rows[rows.length - 1].documentId : null });
+});
+
+// ---------------------------------------------------------------------------
+// 物件(2026-09-29,CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md)——本機腳本用,驗證同寫回密鑰。
+//   GET  /api/archive/objects                 物件成員(主文件/附件類型/品項層)+ 非單據附件,archive.py --source attachments
+//                                             依此產生附件改名計畫 <主文件檔名去副檔名>_附件_<類型>_<序號>.<ext>
+//   POST /api/archive/purchase-objects        回溯合併:Theo 在 merge-suggestions TSV 勾選後,scripts/merge_objects.py 逐筆送來建物件
+//                                             { objects: [{ primaryDocumentId, attachments: [{ documentId, role?, itemLineNo? }], note? }] }(一次 ≤ 20)
+// ---------------------------------------------------------------------------
+archiveRoute.get("/objects", async (c) => {
+  const db = createDb(c.env.DB);
+  const [links, extra] = await Promise.all([
+    db
+      .select({
+        purchaseId: documentPurchaseLinks.purchaseId,
+        documentId: documentPurchaseLinks.documentId,
+        relationKind: documentPurchaseLinks.relationKind,
+        attachmentRole: documentPurchaseLinks.attachmentRole,
+        purchaseItemId: documentPurchaseLinks.purchaseItemId,
+        localPath: documentFiles.localPath,
+        sha256: documentFiles.sha256,
+        storage: documentFiles.storage,
+      })
+      .from(documentPurchaseLinks)
+      .leftJoin(
+        documentFiles,
+        and(eq(documentFiles.documentId, documentPurchaseLinks.documentId), eq(documentFiles.kind, "original"), eq(documentFiles.isCurrent, true)),
+      )
+      .where(ne(documentPurchaseLinks.relationKind, "duplicate_evidence")),
+    db.select().from(purchaseAttachments),
+  ]);
+  return c.json({ links, attachments: extra });
+});
+
+archiveRoute.post("/purchase-objects", async (c) => {
+  const body = await c.req
+    .json<{ objects?: Array<{ primaryDocumentId?: string; attachments?: Array<{ documentId: string; role?: string | null; itemLineNo?: number | null }>; note?: string }> }>()
+    .catch(() => null);
+  if (!body || !Array.isArray(body.objects) || !body.objects.length) return c.json({ error: "invalid_json", message: "body 必須是 { objects: [...] }" }, 400);
+  if (body.objects.length > 20) return c.json({ error: "too_many_objects", max: 20 }, 400);
+  const db = createDb(c.env.DB);
+  const results: Array<{ primaryDocumentId: string; ok: boolean; purchaseId?: string; error?: string; message?: string }> = [];
+  for (const o of body.objects) {
+    if (!o.primaryDocumentId) {
+      results.push({ primaryDocumentId: "", ok: false, error: "missing_primary" });
+      continue;
+    }
+    try {
+      const created = await createObject(db, o.primaryDocumentId, { memberId: null, name: `回溯合併${o.note ? `(${o.note})` : ""}` }, o.attachments ?? [], "import");
+      results.push({ primaryDocumentId: o.primaryDocumentId, ok: true, purchaseId: created.purchaseId });
+    } catch (err) {
+      // 每個物件是獨立的 D1 batch:一個失敗(含 D1 錯誤)只記錄、不中斷,回應一定列出每一筆的結果,腳本的 done 檔才完整。
+      results.push({
+        primaryDocumentId: o.primaryDocumentId,
+        ok: false,
+        error: err instanceof ObjectError ? err.code : "write_failed",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return c.json({ ok: results.every((r) => r.ok), results });
+});
+
+// 非單據附件(影片/照片)的 NAS 搬移回寫——規則同 /moves:fromPath 要等於目前紀錄,登記過 sha256 的要相符;
+// 冪等(已經是 toPath 直接 ok);整批驗證通過才在單一 D1 batch 裡更新。
+archiveRoute.post("/attachment-moves", async (c) => {
+  const body = await c.req.json<{ moves?: Array<{ attachmentId?: number; fromPath?: string; toPath?: string; sha256?: string }> }>().catch(() => null);
+  if (!body || !Array.isArray(body.moves) || !body.moves.length) return c.json({ error: "invalid_json" }, 400);
+  if (body.moves.length > MAX_MOVES_PER_BATCH) return c.json({ error: "too_many_moves", max: MAX_MOVES_PER_BATCH }, 400);
+  const db = createDb(c.env.DB);
+  const rejected: Array<{ attachmentId: unknown; error: string; message: string }> = [];
+  const updates: Array<{ id: number; toPath: string; fromPath: string; purchaseId: string }> = [];
+  for (const m of body.moves) {
+    const err = validateLocalPath(m.toPath, { allowOutside: true }) ?? validateLocalPath(m.fromPath, { allowOutside: true });
+    if (!Number.isInteger(m.attachmentId) || err) {
+      rejected.push({ attachmentId: m.attachmentId, error: "invalid_move", message: err ?? "attachmentId 必須是整數" });
+      continue;
+    }
+    const [att] = await db.select().from(purchaseAttachments).where(eq(purchaseAttachments.id, m.attachmentId!)).limit(1);
+    if (!att) rejected.push({ attachmentId: m.attachmentId, error: "not_found", message: "找不到附件紀錄" });
+    else if (att.sha256 && m.sha256 && att.sha256 !== m.sha256) rejected.push({ attachmentId: m.attachmentId, error: "sha256_mismatch", message: `登記 ${att.sha256}` });
+    else if (att.localPath === m.toPath) continue;
+    else if (att.localPath !== m.fromPath) rejected.push({ attachmentId: m.attachmentId, error: "from_path_mismatch", message: `目前 ${att.localPath}` });
+    else updates.push({ id: att.id, toPath: m.toPath!, fromPath: m.fromPath!, purchaseId: att.purchaseId });
+  }
+  if (rejected.length) return c.json({ error: "rejected", written: 0, rejected }, 409);
+  if (updates.length) {
+    try {
+      await db.batch(
+        updates.flatMap((u) => [
+          db.update(purchaseAttachments).set({ localPath: u.toPath }).where(eq(purchaseAttachments.id, u.id)),
+          db.insert(activityLog).values({ entityType: "purchase", entityId: u.purchaseId, kind: "archive", text: `NAS 附件搬移:${u.fromPath} → ${u.toPath}` }),
+        ]) as unknown as Parameters<typeof db.batch>[0],
+      );
+    } catch (err) {
+      return c.json({ ...writeFailed(err), written: 0 }, 503);
+    }
+  }
+  return c.json({ ok: true, written: updates.length });
 });
 
 archiveRoute.post("/documents/:id/move", async (c) => {

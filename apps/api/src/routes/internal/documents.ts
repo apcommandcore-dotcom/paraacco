@@ -29,6 +29,7 @@ import {
 import type { Bindings } from "../../bindings";
 import { createNotification } from "../../notify";
 import { checkDocumentVendor } from "../../vendor-resolution";
+import { attachDocument, ObjectError } from "../../purchase-objects";
 
 export const internalDocumentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -382,13 +383,15 @@ internalDocumentsRoute.post("/:id/auto-link", async (c) => {
   const now = new Date().toISOString();
 
   if (body.targetType === "purchase") {
-    await db.insert(documentPurchaseLinks).values({
-      documentId: id,
-      purchaseId: body.targetId,
-      relationKind: "primary",
-      linkedBy: "auto",
-      confidenceScore: body.score,
-    });
+    // 2026-09-29:走物件的加入規則(見 ../../purchase-objects.ts attachDocument)。已屬其他物件時不自動關聯,改送覆核。
+    try {
+      await attachDocument(db, body.targetId, id, { actor: { memberId: null, name: "系統" }, linkedBy: "auto", confidenceScore: body.score });
+    } catch (err) {
+      if (!(err instanceof ObjectError)) throw err;
+      await db.update(documents).set({ status: "review", updatedAt: now }).where(eq(documents.id, id));
+      await db.insert(activityLog).values({ entityType: "document", entityId: id, kind: "review", text: `自動關聯失敗(${err.message}),送人工覆核` });
+      return c.json({ ok: false, error: err.code });
+    }
   } else {
     await db.insert(documentAssetLinks).values({
       documentId: id,

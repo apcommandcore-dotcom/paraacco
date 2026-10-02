@@ -71,6 +71,20 @@
       "when": 1790525254011,
       "tag": "0009_local_originals_recurring",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790697613390,
+      "tag": "0011_purchase_objects_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790847096531,
+      "tag": "0013_item_categories_rules",
+      "breakpoints": true
     }
   ]
 }

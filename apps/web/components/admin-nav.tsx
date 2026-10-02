@@ -10,6 +10,7 @@ import { usePathname } from "next/navigation";
 const ADMIN_TABS = [
   { href: "/admin/members", label: "公司與成員" },
   { href: "/admin/vendors", label: "供應商與分類" },
+  { href: "/admin/item-categories", label: "品項類別" },
   { href: "/admin/rules", label: "自動化規則" },
   { href: "/admin/transfers", label: "歸屬移轉與稽核" },
   { href: "/admin/settings", label: "系統設定" },

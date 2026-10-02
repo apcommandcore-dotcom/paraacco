@@ -10,8 +10,9 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { apiFetch, VENDOR_TAX_ID_SOURCE_LABELS, type PendingVendorsResponse } from "@/lib/api";
+import { formatCents } from "@/lib/format";
 
-const nt = (cents: number) => `NT$${Math.round(cents / 100).toLocaleString()}`;
+const nt = (cents: number) => formatCents(cents, { round: true });
 
 export function PendingVendors({ onCount }: { onCount?: (n: number) => void }) {
   const [data, setData] = useState<PendingVendorsResponse | null>(null);

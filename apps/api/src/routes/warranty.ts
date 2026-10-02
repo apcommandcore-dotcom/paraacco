@@ -8,7 +8,7 @@
 // 下一期」。
 
 import { Hono } from "hono";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
 import {
   advanceDueDate,
   computeWarrantyStatus,
@@ -18,7 +18,7 @@ import {
   WARRANTY_TYPES,
   type RenewalCycle,
 } from "@paraacco/domain";
-import { activityLog, createDb, nextId, warrantySubscriptions } from "@paraacco/db";
+import { activityLog, createDb, nextId, purchaseItems, purchases, warrantySubscriptions } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
@@ -27,15 +27,47 @@ export const warrantyRoute = new Hono<{ Bindings: Bindings }>();
 warrantyRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const ownership = c.req.query("ownership");
-  const rows = ownership
-    ? await db.select().from(warrantySubscriptions).where(eq(warrantySubscriptions.ownership, ownership)).orderBy(asc(warrantySubscriptions.endDate))
-    : await db.select().from(warrantySubscriptions).orderBy(asc(warrantySubscriptions.endDate));
+  const includeLegacy = c.req.query("includeLegacyRecurring") === "1";
+  const conditions = [
+    ownership ? eq(warrantySubscriptions.ownership, ownership) : undefined,
+    includeLegacy ? undefined : ne(warrantySubscriptions.type, "recurring_bill"),
+  ].filter((v) => v !== undefined);
+  const rows = await db
+    .select()
+    .from(warrantySubscriptions)
+    .where(conditions.length ? and(...conditions) : undefined)
+    .orderBy(asc(warrantySubscriptions.endDate));
+
+  // 2026-09-29(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md 2.5、5.1):保固記在品項上——有保固迄日的品項
+  // 也列在「保固與訂閱」頁(唯讀,點回物件編輯)。歸屬用品項歸屬,沒改過就跟物件(發票)。
+  const itemRows = await db
+    .select({ item: purchaseItems, purchaseOwnership: purchases.ownership, vendorNameRaw: purchases.vendorNameRaw })
+    .from(purchaseItems)
+    .innerJoin(purchases, eq(purchases.id, purchaseItems.purchaseId))
+    .where(isNotNull(purchaseItems.warrantyEndDate));
+  const itemWarranties = itemRows
+    .map(({ item, purchaseOwnership, vendorNameRaw }) => ({
+      itemId: item.id,
+      purchaseId: item.purchaseId,
+      name: item.name,
+      brand: item.brand,
+      model: item.model,
+      serialNo: item.serialNo,
+      vendorName: vendorNameRaw,
+      ownership: item.ownership ?? purchaseOwnership,
+      startDate: item.warrantyStartDate,
+      endDate: item.warrantyEndDate!,
+      status: computeWarrantyStatus({ endDate: item.warrantyEndDate!, reminderDaysBefore: 30 }),
+    }))
+    .filter((w) => !ownership || w.ownership === ownership)
+    .sort((a, b) => a.endDate.localeCompare(b.endDate));
 
   return c.json({
     items: rows.map((row) => ({
       ...row,
       status: computeWarrantyStatus({ endDate: row.endDate, reminderDaysBefore: row.reminderDaysBefore }),
     })),
+    itemWarranties,
   });
 });
 

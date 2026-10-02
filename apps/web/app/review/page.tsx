@@ -9,12 +9,16 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CheckCircle2, XCircle, AlertCircle, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { VendorName } from "@/components/vendor-name";
 import { NasLocation } from "@/components/nas-location";
 import { RecurringFields } from "@/components/recurring-fields";
+import { MergeToObject } from "@/components/merge-to-object";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { fieldLabel } from "@/lib/format";
+import { FieldValue } from "@/components/field-value";
 import {
   apiFetch,
   API_BASE,
@@ -249,7 +253,7 @@ function ReviewWorkbench() {
                     }`}
                   >
                     <div className="font-mono text-muted-foreground">{doc.id}</div>
-                    <div className="mt-1 truncate">{doc.vendorNameRaw ?? "（未擷取供應商）"}</div>
+                    <div className="mt-1 truncate">{doc.vendorNameRaw || doc.vendorName ? <VendorName doc={doc} /> : "（未擷取供應商）"}</div>
                   </button>
                 </li>
               ))}
@@ -327,8 +331,10 @@ function ReviewWorkbench() {
                   <tbody>
                     {displayFields.map((f) => (
                       <tr key={f.id} className="border-b border-border last:border-0">
-                        <td className="w-1/3 py-2 pr-3 text-xs text-muted-foreground">{f.label}</td>
-                        <td className="py-2 pr-3">{f.value ?? "—"}</td>
+                        <td className="w-1/3 py-2 pr-3 align-top text-xs text-muted-foreground">{fieldLabel(f.fieldKey, f.label)}</td>
+                        <td className="py-2 pr-3">
+                          <FieldValue fieldKey={f.fieldKey} value={f.value} currency={detail.document.currency} />
+                        </td>
                         <td className="w-24 py-2 text-right">
                           {f.confidence != null && <Badge variant={confidenceVariant(f.confidence)}>{f.confidence}</Badge>}
                         </td>
@@ -346,7 +352,9 @@ function ReviewWorkbench() {
           )}
         </Card>
 
-        {/* 右欄:關聯候選 + 操作 */}
+        {/* 右欄:合併到物件(2026-09-29)+ 關聯候選 + 操作 */}
+        <div className="space-y-4">
+        {detail && <MergeToObject documentId={detail.document.id} />}
         <Card className="h-fit">
           <CardHeader>
             <CardTitle>關聯候選</CardTitle>
@@ -433,6 +441,7 @@ function ReviewWorkbench() {
             )}
           </CardContent>
         </Card>
+        </div>
       </div>
     </AppShell>
   );

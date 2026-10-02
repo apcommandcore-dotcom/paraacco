@@ -21,7 +21,7 @@ export const vendorsRoute = new Hono<{ Bindings: Bindings }>();
 vendorsRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const categoryId = c.req.query("categoryId");
-  const rows = categoryId
+  let rows = categoryId
     ? await db.select().from(vendors).where(eq(vendors.defaultCategoryId, categoryId))
     : await db.select().from(vendors);
   const aliasRows = await db.select().from(vendorAliases);

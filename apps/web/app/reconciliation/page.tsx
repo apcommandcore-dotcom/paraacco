@@ -15,11 +15,13 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatCents } from "@/lib/format";
 import {
   apiFetch,
   RECONCILIATION_STATUS_LABELS,
   type EntityRow,
   type ReconciliationStatus,
+  type AdvanceItem,
   type StatementLineRow,
 } from "@/lib/api";
 
@@ -29,10 +31,7 @@ function statusVariant(status: ReconciliationStatus): "success" | "warning" | "d
   return "destructive";
 }
 
-function formatAmount(cents: number): string {
-  const sign = cents < 0 ? "-" : "";
-  return `${sign}NT$${Math.abs(cents / 100).toLocaleString("zh-TW")}`;
-}
+const formatAmount = (cents: number) => formatCents(cents);
 
 const STATUS_TABS: { value: ReconciliationStatus | null; label: string }[] = [
   { value: null, label: "全部" },
@@ -197,6 +196,83 @@ export default function ReconciliationPage() {
           )}
         </CardContent>
       </Card>
+      <UnsettledAdvances />
     </AppShell>
+  );
+}
+
+/** 代墊未請回(2026-10-01,CODE_TASK_purchase-object-merge-docs_20260929_V1.02.md 7.2-4):品項右鍵標「代墊」的款項集中列在這裡,
+ *  依請款對象分組;請回後按「已請回」(寫 activity_log,可在品項選單復原)。 */
+function UnsettledAdvances() {
+  const [items, setItems] = useState<AdvanceItem[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = () =>
+    apiFetch<{ items: AdvanceItem[] }>("/api/purchase-items/advances?settled=0")
+      .then((d) => setItems(d.items))
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  useEffect(() => {
+    load();
+  }, []);
+  async function settle(ids: string[]) {
+    setBusy(true);
+    try {
+      await apiFetch("/api/purchase-items/bulk", { method: "POST", body: JSON.stringify({ itemIds: ids, set: { advanceSettled: true } }) });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const groups = new Map<string, AdvanceItem[]>();
+  for (const i of items ?? []) groups.set(i.payeeName ?? "(未指定)", [...(groups.get(i.payeeName ?? "(未指定)") ?? []), i]);
+  return (
+    <Card className="mt-6">
+      <CardContent className="pt-4">
+        <h2 className="mb-2 text-sm font-semibold">
+          代墊未請回{items && items.length > 0 ? `(${items.length} 項,${formatAmount(items.reduce((s, i) => s + i.amountCents, 0))})` : ""}
+        </h2>
+        {error && <div className="mb-2 text-xs text-destructive">{error}</div>}
+        {items === null ? (
+          <div className="text-xs text-muted-foreground">載入中…</div>
+        ) : items.length === 0 ? (
+          <div className="text-xs text-muted-foreground">目前沒有待請款的代墊品項。在物件品項上按右鍵 › 代墊 就會出現在這裡。</div>
+        ) : (
+          [...groups.entries()].map(([payee, list]) => (
+            <div key={payee} className="mb-3">
+              <div className="mb-1 flex items-center gap-2 text-xs font-semibold">
+                {payee}・{formatAmount(list.reduce((s, i) => s + i.amountCents, 0))}
+                <button type="button" disabled={busy} className="font-normal text-primary hover:underline" onClick={() => settle(list.map((i) => i.id))}>
+                  全部標為已請回
+                </button>
+              </div>
+              <Table>
+                <TableBody>
+                  {list.map((i) => (
+                    <TableRow key={i.id}>
+                      <TableCell className="whitespace-nowrap font-mono text-xs">{i.purchaseDate}</TableCell>
+                      <TableCell className="text-xs">{i.vendorName ?? "—"}</TableCell>
+                      <TableCell className="text-xs">{i.name}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right font-mono text-xs">{formatAmount(i.amountCents)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs">
+                        <a className="text-foreground-3 hover:underline" href={`/documents?view=purchase&id=${i.purchaseId}`}>
+                          {i.purchaseId}
+                        </a>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <button type="button" disabled={busy} className="text-xs text-primary hover:underline" onClick={() => settle([i.id])}>
+                          已請回
+                        </button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useScope } from "@/components/scope-context";
 import { apiFetch, type DocumentRow, type WarrantyItem } from "@/lib/api";
+import { formatCents } from "@/lib/format";
 
 function thisMonthPrefix(): string {
   const d = new Date();
@@ -45,7 +46,7 @@ export function OverviewKpis() {
     { label: "處理失敗", value: failed?.toString(), hint: "份", href: "/documents?status=failed", alert: !!failed },
     {
       label: `本月單據金額(${Number(month.slice(5))} 月)`,
-      value: monthCents != null ? `NT$${Math.round(monthCents / 100).toLocaleString()}` : undefined,
+      value: monthCents != null ? formatCents(monthCents, { round: true }) : undefined,
       hint: "依發票/帳單日期,點擊看月報表",
       href: `/reports?month=${month}`,
     },
