@@ -143,6 +143,8 @@ const TEXT_FIELD_DEFS: FieldDef[] = [
   // (見上方註解:document_extracted_fields.fieldKey 本來就不是純 camelCase 慣例)。
   { bodyKey: "machineNo", fieldKey: "machine_no", label: "機台號", docColumn: null },
   { bodyKey: "paymentMethod", fieldKey: "payment_method", label: "付款方式", docColumn: null },
+  // 2026-10-01(SPEC V1.06 R11):定期繳費自動掛期用。accountNumber 沿用內部 pipeline 既有鍵;billing_month 另外驗證格式(見下方)。
+  { bodyKey: "accountNumber", fieldKey: "accountNumber", label: "用戶號碼", docColumn: null },
 ];
 
 const AMOUNT_FIELD_DEFS: FieldDef[] = [
@@ -271,6 +273,18 @@ extractionWritebackRoute.post("/documents/:id", async (c) => {
     if (value) candidates.push({ fieldKey: "vendorTaxId", label: "賣方統編", value, docColumn: null });
   } else if (body.vendorTaxId != null && (body.vendorTaxIdSource === "qr" || body.vendorTaxIdSource === "printed")) {
     candidates.push({ fieldKey: "vendorTaxIdSource", label: "賣方統編來源", value: body.vendorTaxIdSource, docColumn: null });
+  }
+  if (body.documentRole != null) {
+    if (!["bill", "proof", "bill_and_proof"].includes(body.documentRole)) {
+      return c.json({ error: "invalid_document_role", allowed: ["bill", "proof", "bill_and_proof"] }, 400);
+    }
+    candidates.push({ fieldKey: "document_role", label: "文件角色", value: body.documentRole, docColumn: null });
+  }
+  if (body.billingMonth != null) {
+    if (typeof body.billingMonth !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.billingMonth)) {
+      return c.json({ error: "invalid_billing_month", message: "billingMonth 格式 YYYY-MM" }, 400);
+    }
+    candidates.push({ fieldKey: "billing_month", label: "帳單月份", value: body.billingMonth, docColumn: null });
   }
   if (body.lineItems != null) {
     candidates.push({ fieldKey: "line_items", label: "品項明細", value: JSON.stringify(body.lineItems), docColumn: null });

@@ -3,6 +3,8 @@
 // recurring_series / recurring_month_marks;月份與文件的對應存在 document_extracted_fields
 // (fieldKey 'billing_month'、'billing_month_2'…,值 YYYY-MM;'recurring_series_id')。
 
+import { advanceDueDate, computeWarrantyStatus, type RenewalCycle } from "./warranty-status";
+
 export type RecurringCadence = "monthly" | "bimonthly_odd" | "bimonthly_even" | "yearly";
 export const RECURRING_CADENCES: readonly RecurringCadence[] = ["monthly", "bimonthly_odd", "bimonthly_even", "yearly"];
 
@@ -217,4 +219,107 @@ export function suggestBillingMonths(input: { invoicePeriod?: string | null; inv
     if (isValidMonth(m)) return [m];
   }
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// 2026-09-29 定期繳費單一頁(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md)——recurring_series 成為
+// 定期繳費主表,提醒欄位(分類/本期金額/繳費方式/下期繳費日/提醒天數)從 warranty_subscriptions 併過來。
+// 訂閱(例 Claude Pro)不算定期繳費,留在 warranty_subscriptions(「保固與訂閱」頁)。
+// ---------------------------------------------------------------------------
+
+/** 定期繳費分類(頁面分頁/篩選)。沿用 WARRANTY_CATEGORIES 中屬於定期繳費的類別,另加 statement(信用卡/銀行對帳單,
+ * 既有 RCS-010~019 用)。DB 不加 CHECK,只在 API 驗證。 */
+export const RECURRING_CATEGORIES = [
+  "water",
+  "electricity",
+  "gas",
+  "internet",
+  "telecom",
+  "labor_insurance",
+  "health_insurance",
+  "pension",
+  "tax",
+  "insurance",
+  "rent",
+  "membership",
+  "statement",
+  "other",
+] as const;
+export type RecurringCategory = (typeof RECURRING_CATEGORIES)[number];
+
+export const RECURRING_CATEGORY_LABELS: Record<RecurringCategory, string> = {
+  water: "水費",
+  electricity: "電費",
+  gas: "瓦斯",
+  internet: "網路",
+  telecom: "電信",
+  labor_insurance: "勞保",
+  health_insurance: "健保",
+  pension: "勞退",
+  tax: "稅金",
+  insurance: "保險",
+  rent: "租金",
+  membership: "會費",
+  statement: "信用卡/對帳單",
+  other: "其他",
+};
+
+/** cadence → 「已繳,排下一期」用的週期(沿用 warranty 的 advanceDueDate,月底日對齊行為一致)。 */
+export function cadenceRenewalCycle(cadence: RecurringCadence): Exclude<RenewalCycle, "one_time" | "quarterly" | "semiannual"> {
+  if (cadence === "monthly") return "monthly";
+  if (cadence === "yearly") return "yearly";
+  return "bimonthly";
+}
+
+export function advanceSeriesDueDate(nextDueDate: string, cadence: RecurringCadence): string {
+  return advanceDueDate(nextDueDate, cadenceRenewalCycle(cadence))!;
+}
+
+/** 下期繳費狀態:逾期未繳 / 即將繳費 / 未到期;沒設下期繳費日的是 unscheduled。 */
+export type RecurringDueStatus = "overdue" | "due_soon" | "not_due" | "unscheduled";
+
+export const RECURRING_DUE_STATUS_LABELS: Record<RecurringDueStatus, string> = {
+  overdue: "逾期未繳",
+  due_soon: "即將繳費",
+  not_due: "未到期",
+  unscheduled: "—",
+};
+
+export function recurringDueStatus(nextDueDate: string | null, remindDays: number, now: Date = new Date()): RecurringDueStatus {
+  if (!nextDueDate) return "unscheduled";
+  const s = computeWarrantyStatus({ endDate: nextDueDate, reminderDaysBefore: remindDays }, now);
+  return s === "expired" ? "overdue" : s === "due_soon" ? "due_soon" : "not_due";
+}
+
+/** needs_document=0 的 series(例:勞退每月扣款、沒有帳單文件):應有月份沒有文件也沒有人工標記的,
+ * 視為「無需帳單」,不算缺。有人工標記的照人工標記。 */
+export function autoNotRequiredMarks(
+  series: { cadence: RecurringCadence; startMonth: string; endMonth: string | null },
+  from: string,
+  to: string,
+  docsByMonth: Map<string, CoverageDocRef[]>,
+  marks: CoverageMark[],
+): CoverageMark[] {
+  const marked = new Set(marks.map((m) => m.month));
+  const extra = expectedMonths(series, from, to)
+    .filter((m) => !marked.has(m) && !(docsByMonth.get(m)?.length))
+    .map((month) => ({ month, status: "not_required" as const, note: "此項目設定為無需帳單" }));
+  return [...marks, ...extra];
+}
+
+// ---------------------------------------------------------------------------
+// 2026-10-01(V1.04 第〇之一節):/browse「依標題瀏覽」完全不出現定期繳費的分類、供應商、文件。
+// categories 表裡這三個是定期繳費分類(舊網址 /browse?category=… 301 到 /recurring 對應分類);
+// 名稱比對是保險(之後在後台新增「水費」之類的分類也一併排除)。
+// ---------------------------------------------------------------------------
+export const RECURRING_BROWSE_CATEGORY_MAP: Record<string, string[]> = {
+  telecom: ["telecom", "internet"],
+  insurance: ["labor_insurance", "health_insurance", "pension"],
+  utilities: ["water", "electricity", "gas"],
+};
+
+const RECURRING_CATEGORY_NAME_RE = /水費|電費|瓦斯|網路|電信|勞保|健保|勞退|勞健保|稅金|保險|租金|會費|水電/;
+
+export function isRecurringBrowseCategory(c: { id: string; name: string }): boolean {
+  return c.id in RECURRING_BROWSE_CATEGORY_MAP || RECURRING_CATEGORY_NAME_RE.test(c.name);
 }

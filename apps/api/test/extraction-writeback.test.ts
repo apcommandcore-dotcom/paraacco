@@ -173,6 +173,19 @@ describe("POST /documents/:id —— 基本寫入", () => {
     expect(vendorField?.isUserConfirmed).toBe(true);
   });
 
+  it("SPEC V1.06 R11:documentRole / accountNumber / billingMonth 寫入欄位,值不合法回 400", async () => {
+    const id = await seedDocument();
+    const ok = await writeback(app, id, { ...VALID_BODY, documentRole: "bill", accountNumber: "C108001950", billingMonth: "2026-08" });
+    expect(ok.status).toBe(200);
+    const rows = await createDb(env.DB).select().from(documentExtractedFields).where(eq(documentExtractedFields.documentId, id));
+    const by = new Map(rows.map((r) => [r.fieldKey, r.value]));
+    expect(by.get("document_role")).toBe("bill");
+    expect(by.get("accountNumber")).toBe("C108001950");
+    expect(by.get("billing_month")).toBe("2026-08");
+    expect((await writeback(app, id, { ...VALID_BODY, documentRole: "receipt" })).status).toBe(400);
+    expect((await writeback(app, id, { ...VALID_BODY, billingMonth: "2026/08" })).status).toBe(400);
+  });
+
   it("每次寫入都留下 activity_log 稽核紀錄", async () => {
     const id = await seedDocument();
     await writeback(app, id, VALID_BODY);

@@ -395,6 +395,17 @@ export class DocumentProcessingWorkflow extends WorkflowEntrypoint<Bindings, Doc
         await updateJob(env, jobId, { status: "completed", completedAt: new Date().toISOString() });
       });
 
+      // 定期繳費自動掛期(2026-10-01,CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 3.1)——帳單/繳費證明掛到對應期次。
+      // 獨立一步、失敗不影響文件處理結果(舊版 API 沒有這個端點時也只是記一筆 failed 事件)。
+      await step.do("stage-9-match-recurring", async () => {
+        try {
+          const r = await callInternal<{ outcome: string }>(env, "POST", `/internal/documents/${documentId}/match-recurring`, {});
+          await logEvent(env, jobId, 8, "decision", "completed", { matchRecurring: r });
+        } catch (err) {
+          await logEvent(env, jobId, 8, "decision", "failed", { matchRecurring: err instanceof Error ? err.message : String(err) }).catch(() => undefined);
+        }
+      });
+
       return { status: "completed" };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

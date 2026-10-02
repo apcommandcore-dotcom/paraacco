@@ -15,6 +15,7 @@ import { createDb, statementLines } from "@paraacco/db";
 import { matchStatementLine } from "@paraacco/domain";
 import type { Bindings } from "../../bindings";
 import { candidatesForEntity, reconcilePendingStatementLines } from "../../reconciliation";
+import { matchRecurringStatementLine } from "../../recurring-matching";
 
 export const internalStatementLinesRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -46,6 +47,10 @@ internalStatementLinesRoute.post("/documents/:documentId", async (c) => {
       })
       .returning({ id: statementLines.id });
     if (row) insertedIds.push(row.id);
+  }
+  // 定期繳費(2026-10-01,V1.04 3.2):每一列再跑一次對帳單扣款 → 期次。失敗不影響明細寫入。
+  for (const lineId of insertedIds) {
+    await matchRecurringStatementLine(db, lineId).catch((err) => console.error("matchRecurringStatementLine failed", lineId, err));
   }
 
   return c.json({ ok: true, count: insertedIds.length, ids: insertedIds });

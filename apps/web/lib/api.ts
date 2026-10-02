@@ -110,6 +110,8 @@ export interface DocumentRow {
   vendorName?: string | null;
   /** matched | pending | taxid_unreadable(document_extracted_fields.vendor_status)。 */
   vendorStatus?: string | null;
+  /** 掛上的定期繳費項目(recurring_series.id);有值 = 定期繳費帳單(2026-09-29)。 */
+  recurringSeriesId?: string | null;
   /** 所屬物件與角色(2026-09-29):primary = 主文件、supporting = 附件(attachmentRole 標類型)。 */
   purchaseId?: string | null;
   purchaseRelation?: "primary" | "supporting" | null;
@@ -466,7 +468,146 @@ export interface RecurringSeriesRow {
   accountRef: string | null;
   startMonth: string;
   endMonth: string | null;
+  // 2026-09-29(migration 0010,定期繳費單一頁)
+  vendorId?: string | null;
+  vendorName?: string | null;
+  matchRule?: string | null;
+  note?: string | null;
+  category?: string | null;
+  amountCents?: number | null;
+  paymentMethod?: PaymentMethod | null;
+  nextDueDate?: string | null;
+  remindDays?: number;
+  needsDocument?: boolean;
+  dueStatus?: RecurringDueStatus;
+  // 2026-10-01(V1.04):期次
+  dueRule?: "bill" | "next_month_day" | "fixed_day";
+  dueDay?: number | null;
+  amountMode?: "fixed" | "variable";
+  requireProof?: boolean;
+  periodCount?: number;
+  currentPeriodKey?: string | null;
+  currentStatus?: PeriodDisplayStatus | null;
+  previousAmountCents?: number | null;
 }
+
+export type PeriodDisplayStatus = "paid" | "waived" | "debited" | "proof_missing" | "pending_statement" | "bill_missing" | "overdue" | "due_soon" | "not_due";
+export const PERIOD_DISPLAY_LABELS: Record<PeriodDisplayStatus, string> = {
+  paid: "已繳",
+  waived: "無需帳單",
+  debited: "已扣款、缺證明",
+  proof_missing: "缺繳款證明",
+  pending_statement: "待對帳",
+  bill_missing: "帳單未到",
+  overdue: "逾期未繳",
+  due_soon: "即將繳費",
+  not_due: "未到期",
+};
+export const PERIOD_DISPLAY_VARIANT: Record<PeriodDisplayStatus, "success" | "outline" | "warning" | "destructive" | "info"> = {
+  paid: "success",
+  waived: "outline",
+  debited: "warning",
+  proof_missing: "destructive",
+  pending_statement: "info",
+  bill_missing: "warning",
+  overdue: "destructive",
+  due_soon: "warning",
+  not_due: "outline",
+};
+export const PAID_SOURCE_LABELS: Record<string, string> = { statement: "對帳單", proof: "繳費證明", manual: "手動(無證明)" };
+
+export interface RecurringPeriodRow {
+  id: number;
+  seriesId: string;
+  periodKey: string;
+  periodMonths: string[];
+  dueDate: string | null;
+  dueDateSource: string;
+  amountCents: number | null;
+  billDocId: string | null;
+  proofDocId: string | null;
+  statementLineId: number | null;
+  status: string;
+  paidAt: string | null;
+  paidSource: string | null;
+  billMissingFlag: boolean;
+  matchConfidence: string | null;
+  matchNote: string | null;
+  displayStatus: PeriodDisplayStatus;
+  statementLine: { id: number; date: string; amountCents: number; description: string } | null;
+}
+
+export interface RecurringReview {
+  id: number;
+  seriesId: string | null;
+  periodKey: string | null;
+  documentId: string | null;
+  statementLineId: number | null;
+  role: string | null;
+  reason: string;
+  note: string | null;
+  status: string;
+}
+export const REVIEW_REASON_LABELS: Record<string, string> = {
+  medium_confidence: "中信心",
+  duplicate_bill: "同一期重複",
+  multiple_matches: "多筆命中",
+  amount_mismatch: "金額不符",
+  vendor_unregistered: "統編未建檔",
+};
+
+// ---------------------------------------------------------------------------
+// 定期繳費(2026-09-29,CODE_TASK_recurring-bills-single-page_20260929_V1.01.md)——跟 packages/domain 的
+// RECURRING_CATEGORIES 一致(API 驗證用那一份)。訂閱不算定期繳費,留在「保固與訂閱」。
+// ---------------------------------------------------------------------------
+export const RECURRING_CATEGORY_LABELS: Record<string, string> = {
+  water: "水費",
+  electricity: "電費",
+  gas: "瓦斯",
+  internet: "網路",
+  telecom: "電信",
+  labor_insurance: "勞保",
+  health_insurance: "健保",
+  pension: "勞退",
+  tax: "稅金",
+  insurance: "保險",
+  rent: "租金",
+  membership: "會費",
+  statement: "信用卡/對帳單",
+  other: "其他",
+};
+
+/** 舊的依標題瀏覽定期繳費分類(categories 表)→ /recurring 的分類群組(?category=);2026-10-01 起 /browse 不再顯示這些分類,
+ * 只用在舊網址轉址。與 packages/domain RECURRING_BROWSE_CATEGORY_MAP 一致。 */
+export const BROWSE_TO_RECURRING_CATEGORIES: Record<string, string[]> = {
+  telecom: ["telecom", "internet"],
+  insurance: ["labor_insurance", "health_insurance", "pension"],
+  utilities: ["water", "electricity", "gas"],
+};
+
+export type RecurringDueStatus = "overdue" | "due_soon" | "not_due" | "unscheduled";
+export const RECURRING_DUE_STATUS_LABELS: Record<RecurringDueStatus, string> = {
+  overdue: "逾期未繳",
+  due_soon: "即將繳費",
+  not_due: "未到期",
+  unscheduled: "—",
+};
+
+export interface SeriesDocument {
+  id: string;
+  status: string;
+  invoiceDate: string | null;
+  docDate: string | null;
+  amountCents: number | null;
+  currency: string | null;
+  displayName: string | null;
+  vendorNameRaw: string | null;
+  billingMonths: string[];
+  excluded: boolean;
+}
+
+/** 訂閱/保固頁的分類(2026-09-29:定期繳費類別移到 /recurring)。 */
+export const COVERAGE_CATEGORY_LABELS: Record<string, string> = { software: "軟體/線上服務", device: "硬體", other: "其他" };
 
 export interface CoverageCell {
   month: string;
@@ -475,6 +616,8 @@ export interface CoverageCell {
   documentIds: string[];
   reminderDocumentIds: string[];
   note: string | null;
+  periodId?: number;
+  periodStatus?: PeriodDisplayStatus;
 }
 
 export interface CoverageSeries extends RecurringSeriesRow {
@@ -783,3 +926,8 @@ export interface ReportItemListEntry {
 
 export const UNCATEGORIZED_KEY = "__none__";
 
+const RECURRING_CATEGORY_NAME_RE = /水費|電費|瓦斯|網路|電信|勞保|健保|勞退|勞健保|稅金|保險|租金|會費|水電/;
+/** 2026-10-01:/browse 不顯示定期繳費分類(同 packages/domain isRecurringBrowseCategory,API 已過濾,這裡是保險)。 */
+export function isRecurringBrowseCategory(c: { id: string; name: string }): boolean {
+  return c.id in BROWSE_TO_RECURRING_CATEGORIES || RECURRING_CATEGORY_NAME_RE.test(c.name);
+}

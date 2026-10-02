@@ -981,6 +981,25 @@ export const recurringSeries = sqliteTable(
     note: text("note"),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
     updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    // 2026-09-29(migration 0010,CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.2)——定期繳費集中到
+    // /recurring 單一頁,recurring_series 成為主表,把原本 warranty_subscriptions(type='recurring_bill')的提醒欄位補進來。
+    // 全部 ALTER TABLE ADD COLUMN(不重建表:recurring_month_marks 有外鍵參照這張表,D1 的 DROP TABLE 會違反外鍵)。
+    // 列舉值只在應用層驗證(RECURRING_CATEGORIES、PAYMENT_METHODS),不加 DB CHECK,理由同 documents.source。
+    category: text("category"), // 見 @paraacco/domain RECURRING_CATEGORIES,null = 未分類
+    amountCents: integer("amount_cents"), // 本期金額(分)
+    paymentMethod: text("payment_method"), // 'auto_debit' | 'credit_card' | 'manual' | null
+    nextDueDate: text("next_due_date"), // YYYY-MM-DD,下期繳費期限;「已繳」依 cadence 往後推(同原 /warranty/:id/advance)
+    remindDays: integer("remind_days").notNull().default(7), // 繳費期限前幾天算「即將繳費」
+    // 0 = 沒有帳單文件的項目(例:勞退每月扣款),月份檢核把沒有文件的應有月份視為「無需帳單」,不算缺。
+    needsDocument: integer("needs_document", { mode: "boolean" }).notNull().default(true),
+    // 2026-10-01(migration 0012,CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 2.1)——項目 = 範本,只建一次;
+    // 每一期另存 recurring_periods(系統自動產生、自動掛帳單/證明/扣款)。
+    // due_rule:'bill'(依帳單上的繳費期限,沒有帳單時用 due_day 推估)| 'next_month_day'(期末次月 due_day 日)| 'fixed_day'(期末當月 due_day 日)
+    dueRule: text("due_rule").notNull().default("bill"),
+    dueDay: integer("due_day"),
+    amountMode: text("amount_mode").notNull().default("variable"), // 'fixed' | 'variable'
+    // 1 = 對帳單扣款不足以結案,每期要掛繳款證明才算已繳(勞保、健保、勞退、稅金…;2026-10-01 決定)。
+    requireProof: integer("require_proof", { mode: "boolean" }).notNull().default(false),
   },
   (t) => ({
     cadenceCheck: check(
@@ -995,6 +1014,75 @@ export const recurringSeries = sqliteTable(
       "recurring_series_month_check",
       sql`${t.startMonth} GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]' AND (${t.endMonth} IS NULL OR ${t.endMonth} GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]')`,
     ),
+  }),
+);
+
+// 定期繳費的每一期 —— 2026-10-01(migration 0012,CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 2.2)。
+// 系統自動產生(每日排程補「已過的期次 + 下一期」;帳單/扣款先到時由掛期流程直接建立),帳單/繳費證明/對帳明細自動掛上。
+// period_key = 起月 YYYY-MM;雙月一期兩個月(period_months 例 ["2026-07","2026-08"]),金額不拆。
+// status:expected 未到帳單 / billed 帳單已到未付 / debited 已扣款缺證明(require_proof)/ paid / waived 無需帳單 / overdue。
+// 畫面上的「待對帳」「帳單未到」「缺繳款證明」「逾期未繳」由 @paraacco/domain periodDisplayStatus() 即時算,不存欄位。
+export const recurringPeriods = sqliteTable(
+  "recurring_periods",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    seriesId: text("series_id")
+      .notNull()
+      .references(() => recurringSeries.id),
+    periodKey: text("period_key").notNull(),
+    periodMonths: text("period_months").notNull(), // JSON 陣列
+    dueDate: text("due_date"),
+    dueDateSource: text("due_date_source").notNull().default("estimated"), // 'estimated' | 'bill'
+    amountCents: integer("amount_cents"),
+    billDocId: text("bill_doc_id").references(() => documents.id),
+    proofDocId: text("proof_doc_id").references(() => documents.id),
+    statementLineId: integer("statement_line_id").references(() => statementLines.id),
+    status: text("status").notNull().default("expected"),
+    paidAt: text("paid_at"),
+    paidSource: text("paid_source"), // 'statement' | 'proof' | 'manual'
+    billMissingFlag: integer("bill_missing_flag", { mode: "boolean" }).notNull().default(false), // 扣款先到、帳單未到
+    matchConfidence: text("match_confidence"), // 'high' | 'medium' | 'manual' | 'backfill'
+    matchNote: text("match_note"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    seriesPeriodIdx: uniqueIndex("recurring_periods_series_period_idx").on(t.seriesId, t.periodKey),
+    billIdx: index("recurring_periods_bill_idx").on(t.billDocId),
+    proofIdx: index("recurring_periods_proof_idx").on(t.proofDocId),
+    statusCheck: check(
+      "recurring_periods_status_check",
+      sql`${t.status} IN ('expected', 'billed', 'debited', 'paid', 'waived', 'overdue')`,
+    ),
+    paidSourceCheck: check(
+      "recurring_periods_paid_source_check",
+      sql`${t.paidSource} IS NULL OR ${t.paidSource} IN ('statement', 'proof', 'manual')`,
+    ),
+  }),
+);
+
+// 自動掛期的待覆核(中信心、同一期重複帳單、對帳單多筆命中/金額不符、統編未建檔)—— 2026-10-01(migration 0012)。
+// 不用 relation_candidates:那張表 target_type 的 CHECK 只有 purchase/asset/document,改要重建表。
+export const recurringMatchReviews = sqliteTable(
+  "recurring_match_reviews",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    seriesId: text("series_id").references(() => recurringSeries.id),
+    periodKey: text("period_key"),
+    documentId: text("document_id").references(() => documents.id),
+    statementLineId: integer("statement_line_id").references(() => statementLines.id),
+    role: text("role"), // 'bill' | 'proof' | 'bill_and_proof' | 'debit'
+    reason: text("reason").notNull(), // 'medium_confidence' | 'duplicate_bill' | 'multiple_matches' | 'amount_mismatch' | 'vendor_unregistered'
+    note: text("note"),
+    status: text("status").notNull().default("pending"), // 'pending' | 'accepted' | 'rejected'
+    decidedByMemberId: text("decided_by_member_id").references(() => members.id),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    statusIdx: index("recurring_match_reviews_status_idx").on(t.status),
+    docIdx: index("recurring_match_reviews_doc_idx").on(t.documentId),
+    statusCheck: check("recurring_match_reviews_status_check", sql`${t.status} IN ('pending', 'accepted', 'rejected')`),
   }),
 );
 

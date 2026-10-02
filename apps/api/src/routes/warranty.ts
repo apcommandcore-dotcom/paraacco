@@ -6,6 +6,11 @@
 // category/paymentMethod/accountRef 三個欄位、bimonthly/semiannual 週期,寫入前先驗證列舉值
 // (原本沒驗證,不合法的值會一路打到 D1 被 CHECK 擋成 500),另加 POST /:id/advance「已繳,排
 // 下一期」。
+//
+// 2026-09-29(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.2、2.3):定期繳費搬到 /recurring
+// (recurring_series 為主表),這裡改回「保固與訂閱」——不再接受新的 recurring_bill;既有 recurring_bill 列保留
+// 唯讀不刪(編輯/已繳/刪除回 409),GET 預設不列(?includeLegacyRecurring=1 才列,給搬移對照用)。
+// 訂閱(例 Claude Pro)不算定期繳費,留在這裡。
 
 import { Hono } from "hono";
 import { and, asc, eq, isNotNull, ne } from "drizzle-orm";
@@ -23,6 +28,11 @@ import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
 export const warrantyRoute = new Hono<{ Bindings: Bindings }>();
+
+const RECURRING_BILL_MOVED = {
+  error: "recurring_bill_moved",
+  message: "定期繳費已移到「定期繳費」頁(/recurring),這裡只放保固與訂閱;既有的定期繳費紀錄保留唯讀。",
+};
 
 warrantyRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
@@ -120,6 +130,7 @@ warrantyRoute.post("/", async (c) => {
   if (!canWrite(auth.scope)) return c.json({ error: "forbidden" }, 403);
 
   const body = await c.req.json<WarrantyBody>();
+  if (body.type === "recurring_bill") return c.json(RECURRING_BILL_MOVED, 400);
   const bad = invalidField(body, false);
   if (bad) return c.json({ error: "invalid_field", field: bad }, 400);
   const db = createDb(c.env.DB);
@@ -164,12 +175,14 @@ warrantyRoute.post("/:id", async (c) => {
 
   const id = c.req.param("id");
   const body = await c.req.json<Partial<WarrantyBody>>();
+  if (body.type === "recurring_bill") return c.json(RECURRING_BILL_MOVED, 400);
   const bad = invalidField(body, true);
   if (bad) return c.json({ error: "invalid_field", field: bad }, 400);
   const db = createDb(c.env.DB);
 
   const [existing] = await db.select().from(warrantySubscriptions).where(eq(warrantySubscriptions.id, id)).limit(1);
   if (!existing) return c.json({ error: "not_found" }, 404);
+  if (existing.type === "recurring_bill") return c.json(RECURRING_BILL_MOVED, 409);
 
   await db
     .update(warrantySubscriptions)
@@ -212,6 +225,7 @@ warrantyRoute.post("/:id/advance", async (c) => {
   const db = createDb(c.env.DB);
   const [existing] = await db.select().from(warrantySubscriptions).where(eq(warrantySubscriptions.id, id)).limit(1);
   if (!existing) return c.json({ error: "not_found" }, 404);
+  if (existing.type === "recurring_bill") return c.json(RECURRING_BILL_MOVED, 409);
 
   const next = advanceDueDate(existing.endDate, existing.renewalCycle as RenewalCycle);
   if (!next) return c.json({ error: "no_next_cycle", message: "一次性項目沒有下一期" }, 409);
@@ -242,6 +256,8 @@ warrantyRoute.post("/:id/delete", async (c) => {
 
   const id = c.req.param("id");
   const db = createDb(c.env.DB);
+  const [existing] = await db.select({ type: warrantySubscriptions.type }).from(warrantySubscriptions).where(eq(warrantySubscriptions.id, id)).limit(1);
+  if (existing?.type === "recurring_bill") return c.json(RECURRING_BILL_MOVED, 409);
   await db.delete(warrantySubscriptions).where(eq(warrantySubscriptions.id, id));
   return c.json({ ok: true });
 });

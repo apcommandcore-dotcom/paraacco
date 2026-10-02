@@ -10,6 +10,7 @@ import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { isValidTaxId, normalizeTaxId } from "@paraacco/domain";
 import { activityLog, createDb, documentFiles, documents, recurringSeries, vendors, vendorAliases } from "@paraacco/db";
 import { lookupTaxId } from "../tax-id-lookup";
+import { NOT_RECURRING_DOC } from "./documents";
 import { backfillVendorIds, listPendingVendors } from "../vendor-resolution";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
@@ -25,6 +26,21 @@ vendorsRoute.get("/", async (c) => {
     ? await db.select().from(vendors).where(eq(vendors.defaultCategoryId, categoryId))
     : await db.select().from(vendors);
   const aliasRows = await db.select().from(vendorAliases);
+  // ?browse=1(2026-10-01,定期繳費 V1.04 第〇之一節):排除「只出現在定期繳費」的供應商——底下有文件但全部是定期繳費,
+  // 或是某個定期繳費項目的供應商且沒有任何一般消費文件。同時有一般消費文件的供應商保留。
+  if (c.req.query("browse") === "1") {
+    const stats = await db.all<{ vendor_id: string; total: number; general: number }>(
+      sql`SELECT "documents"."vendor_id" AS vendor_id, COUNT(*) AS total, SUM(CASE WHEN ${NOT_RECURRING_DOC} THEN 1 ELSE 0 END) AS general FROM "documents" WHERE "documents"."vendor_id" IS NOT NULL GROUP BY "documents"."vendor_id"`,
+    );
+    const seriesVendors = new Set((await db.select({ v: recurringSeries.vendorId }).from(recurringSeries)).map((r) => r.v));
+    const byVendor = new Map(stats.map((r) => [r.vendor_id, r]));
+    rows = rows.filter((v) => {
+      const st = byVendor.get(v.id);
+      if (st && st.total > 0 && !st.general) return false;
+      if (seriesVendors.has(v.id) && !st?.general) return false;
+      return true;
+    });
+  }
   const withAliases = rows.map((v) => ({
     ...v,
     aliases: aliasRows.filter((a) => a.vendorId === v.id).map((a) => a.alias),

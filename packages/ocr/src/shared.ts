@@ -66,6 +66,8 @@ export function toExtractionResult(parsed: ExtractedDocFields, baseConfidence: n
   push("itemName", "品名", parsed.itemName);
   push("scope", "分類範圍", parsed.scope);
   push("notes", "備註", parsed.notes);
+  // 2026-10-01(SPEC V1.06 R11):與外部寫回同一個 fieldKey,定期繳費自動掛期讀這個欄位。
+  push("document_role", "單據角色", parsed.documentRole);
 
   const amountCents = parsed.amount !== undefined ? Math.round(parsed.amount * 100) : undefined;
   if (amountCents !== undefined) {

@@ -7,21 +7,43 @@
 // n < currentStage 的格子填色,失敗時最後一格改紅色,不是原本純文字 stageKey(status) 的
 // 簡化版——純文字版本在供應商名稱較長時會把整列撐到換行、Pipeline 欄位溢出桌面版表格。
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Fragment, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { RefreshCw, AlertTriangle } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { VendorName } from "@/components/vendor-name";
 import { useScope } from "@/components/scope-context";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PendingVendors } from "@/components/pending-vendors";
+import { ExpandAllToggle, ExpandButton, useExpandState } from "@/components/expand-state";
+import { ItemSubRows, useObjectItems } from "@/components/object-items";
+import { IncludeRecurringToggle, useIncludeRecurring } from "@/components/include-recurring-toggle";
 import { apiFetch, DOC_STATUS_LABELS, STAGE_LABELS, type DocumentRow } from "@/lib/api";
+import { formatCents } from "@/lib/format";
+
+// 2026-09-29:處理中心分頁——處理佇列 / 待建檔供應商(CODE_TASK_vendor-name-from-taxid_20260929.md R-V3)。
+type InboxTab = "queue" | "vendors";
 
 export default function InboxPage() {
+  return (
+    <Suspense fallback={null}>
+      <InboxRoot />
+    </Suspense>
+  );
+}
+
+function InboxRoot() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const tab: InboxTab = searchParams.get("tab") === "vendors" ? "vendors" : "queue";
   const { scope } = useScope();
+  const [includeRecurring, setIncludeRecurring] = useIncludeRecurring("inbox");
+  const expand = useExpandState("inbox");
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
+  const objectItems = useObjectItems((documents ?? []).map((d) => (d.purchaseRelation === "primary" ? d.purchaseId : null)));
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // 收件匣清單依側邊欄範圍切換器篩選(2026-09-07 補完設計落差任務書任務 2)。
@@ -76,9 +98,38 @@ export default function InboxPage() {
         <StatTile label="今日已歸檔" en="TODAY" value={stats.archivedToday} tone="success" />
       </div>
 
+      <div className="mb-4 flex gap-1 border-b border-line-2">
+        {(
+          [
+            ["queue", "處理佇列"],
+            ["vendors", "待建檔供應商"],
+          ] as [InboxTab, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => router.replace(key === "queue" ? "/inbox" : "/inbox?tab=vendors")}
+            className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${tab === key ? "border-foreground font-semibold" : "border-transparent text-foreground-2 hover:text-foreground"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "vendors" && <PendingVendors />}
+
+      {tab === "queue" && (
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>處理佇列</CardTitle>
+          <div className="flex flex-wrap items-center gap-3">
+            <IncludeRecurringToggle
+              value={includeRecurring}
+              onChange={setIncludeRecurring}
+              hiddenCount={includeRecurring ? 0 : (documents ?? []).filter((d) => d.recurringSeriesId).length}
+            />
+            <ExpandAllToggle value={expand.allExpanded} onChange={expand.setAllExpanded} />
+          </div>
         </CardHeader>
         <CardContent className="p-0">
           {loadError && (
@@ -104,16 +155,32 @@ export default function InboxPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {documents.slice(0, 30).map((doc) => (
+                {documents
+                  .filter((doc) => includeRecurring || !doc.recurringSeriesId)
+                  .slice(0, 30)
+                  .map((doc) => {
+                  const objItems = doc.purchaseRelation === "primary" && doc.purchaseId ? (objectItems.get(doc.purchaseId) ?? []) : [];
+                  const open = !!doc.purchaseId && expand.isExpanded(doc.purchaseId);
+                  return (
+                  <Fragment key={doc.id}>
                   <TableRow
-                    key={doc.id}
                     onClick={() => router.push(`/review?doc=${doc.id}`)}
                     className="cursor-pointer hover:bg-nav-sub"
                   >
-                    <TableCell className="whitespace-nowrap font-mono text-xs">{doc.id}</TableCell>
-                    <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      <span className="mr-1 inline-block align-middle">
+                        <ExpandButton expanded={open} onClick={() => doc.purchaseId && expand.toggle(doc.purchaseId)} count={objItems.length} />
+                      </span>
+                      {doc.id}
+                      {doc.purchaseId && (
+                        <div className="text-[10px] text-foreground-3">
+                          {doc.purchaseRelation === "primary" ? `物件 ${doc.purchaseId}${objItems.length ? ` · 品項 ${objItems.length}` : ""}` : `附件 → ${doc.purchaseId}`}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell className="max-w-[180px] truncate"><VendorName doc={doc} /></TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}
+                      {formatCents(doc.amountCents, { currency: doc.currency })}
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
@@ -135,12 +202,16 @@ export default function InboxPage() {
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{new Date(doc.createdAt).toLocaleString("zh-TW")}</TableCell>
                   </TableRow>
-                ))}
+                  {open && <ItemSubRows items={objItems} objectOwnership={doc.ownership} layout={["name", "blank", "amount", "ownership", "blank", "blank"]} />}
+                  </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
         </CardContent>
       </Card>
+      )}
     </AppShell>
   );
 }

@@ -15,11 +15,12 @@
 //     unmatched 變成 matched,見 reconciliation.ts。
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
-import { computeWarrantyStatus, daysUntilEndOfWeek } from "@paraacco/domain";
-import { documents, warrantySubscriptions, type Db } from "@paraacco/db";
+import { computeWarrantyStatus, daysUntilEndOfWeek, NOTIFY_DISPLAY_STATUSES, PERIOD_DISPLAY_LABELS, periodDisplayStatus, type PeriodStatus } from "@paraacco/domain";
+import { documents, recurringMatchReviews, recurringPeriods, recurringSeries, warrantySubscriptions, type Db } from "@paraacco/db";
 import { createNotification } from "./notify";
 import { reconcilePendingStatementLines } from "./reconciliation";
 import { backfillVendorIds } from "./vendor-resolution";
+import { billGraceDays, ensurePeriods, statementCoveredThrough } from "./recurring-matching";
 
 const INBOX_STAGE_STATUSES = ["queued", "validating", "ocr", "extract", "classifying", "matching", "vendor_check", "retry"];
 const STALE_INBOX_DAYS = 3;
@@ -97,6 +98,8 @@ export async function runStaleInboxSweep(db: Db, now: Date = new Date()): Promis
 export async function runWarrantyDueSweep(db: Db, now: Date = new Date()): Promise<void> {
   const rows = await db.select().from(warrantySubscriptions);
   for (const row of rows) {
+    // 2026-09-29:定期繳費搬到 recurring_series(見 runRecurringPeriodSweep),warranty 裡舊的 recurring_bill 列唯讀,不再提醒。
+    if (row.type === "recurring_bill") continue;
     const status = computeWarrantyStatus({ endDate: row.endDate, reminderDaysBefore: row.reminderDaysBefore }, now);
     if (status !== "due_soon") continue;
     await createNotification(db, {
@@ -110,6 +113,51 @@ export async function runWarrantyDueSweep(db: Db, now: Date = new Date()): Promi
   }
 }
 
+/** 定期繳費每日掃描(2026-10-01,CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 2.3、第四節;取代 09-29 的「即將繳費」提醒)——
+ * 1. 補期次:已經有期次的項目補「已過的期次 + 下一期」(還沒回溯過的項目不碰,歷史期次等 Theo 確認回溯 SQL 後才寫)。
+ * 2. 通知鈴只推四類:逾期未繳、帳單未到、缺繳款證明、待覆核掛期。每一期每種狀態提醒一次(去重鍵含期次與狀態)。
+ * 通知類型沿用 'warranty_due'(notifications.type 有 CHECK,新增類型要重建表),entityType 區分。 */
+export async function runRecurringPeriodSweep(db: Db, now: Date = new Date()): Promise<void> {
+  await ensurePeriods(db, { onlyIfHasPeriods: true, now });
+  const [series, periods, reviews, coveredThrough, graceDays] = await Promise.all([
+    db.select().from(recurringSeries),
+    db.select().from(recurringPeriods),
+    db.select().from(recurringMatchReviews).where(eq(recurringMatchReviews.status, "pending")),
+    statementCoveredThrough(db),
+    billGraceDays(db),
+  ]);
+  const byId = new Map(series.map((x) => [x.id, x]));
+  for (const p of periods) {
+    const s = byId.get(p.seriesId);
+    if (!s) continue;
+    const st = periodDisplayStatus(
+      { months: JSON.parse(p.periodMonths) as string[], status: p.status as PeriodStatus, dueDate: p.dueDate, billDocId: p.billDocId, statementLineId: p.statementLineId },
+      s,
+      now,
+      { statementCoveredThrough: coveredThrough, graceDays },
+    );
+    if (!NOTIFY_DISPLAY_STATUSES.includes(st)) continue;
+    await createNotification(db, {
+      type: "warranty_due",
+      title: `定期繳費${PERIOD_DISPLAY_LABELS[st]}`,
+      message: `${s.name} ${p.periodKey} 期:${PERIOD_DISPLAY_LABELS[st]}${p.dueDate ? `(繳費期限 ${p.dueDate})` : ""}。`,
+      entityType: "recurring_period",
+      entityId: `${p.seriesId}@${p.periodKey}@${st}`,
+      severity: "warning",
+    });
+  }
+  for (const r of reviews) {
+    await createNotification(db, {
+      type: "warranty_due",
+      title: "定期繳費待覆核掛期",
+      message: `${r.documentId ?? `對帳明細 #${r.statementLineId}`} 可能屬於 ${r.seriesId ?? "定期繳費"}${r.periodKey ? ` ${r.periodKey}` : ""}(${r.reason}),請到定期繳費頁確認。`,
+      entityType: "recurring_review",
+      entityId: String(r.id),
+      severity: "info",
+    });
+  }
+}
+
 /** 每天一次的掃描(收件匣逾期 + 保固到期 + 對帳單重新勾稽),見檔頭說明為什麼前兩者是排程
  * 掃描不是事件觸發。重新勾稽併在同一個每日排程裡,不另外開一條 cron——candidate purchases
  * 可能是明細列落地之後才建立/編輯的,需要定期重跑,跟收件匣/保固到期一樣是「時間條件」
@@ -118,6 +166,7 @@ export async function runWarrantyDueSweep(db: Db, now: Date = new Date()): Promi
 export async function runDailySweep(db: Db, now: Date = new Date()): Promise<void> {
   await runStaleInboxSweep(db, now);
   await runWarrantyDueSweep(db, now);
+  await runRecurringPeriodSweep(db, now);
   await reconcilePendingStatementLines(db);
   // 2026-09-29 R-V4(CODE_TASK_vendor-name-from-taxid_20260929.md):供應商建檔後補對應的保險——
   // POST /api/vendors 當下已經補過,這裡補抓建檔當下失敗、或主檔是從別的管道(migration/SQL)加進來的。

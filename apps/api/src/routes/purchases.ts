@@ -31,6 +31,7 @@ import {
   type Actor,
 } from "../purchase-objects";
 import { parseItemBody, type ItemBody } from "./purchase-items";
+import { NOT_RECURRING_DOC } from "./documents";
 
 export const purchasesRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -45,7 +46,12 @@ purchasesRoute.get("/", async (c) => {
   const projectId = c.req.query("projectId");
   // vendorId 篩選 —— 2026-09-16「依標題瀏覽」入口新增,見架構文件第 1 節。
   const vendorId = c.req.query("vendorId");
+  // ?excludeRecurring=1(2026-10-01,定期繳費 V1.04 第〇之一節):主文件是定期繳費文件的物件不列(依標題瀏覽用)。
+  const excludeRecurring = c.req.query("excludeRecurring") === "1";
   const conditions = [
+    excludeRecurring
+      ? sql`NOT EXISTS (SELECT 1 FROM document_purchase_links l JOIN documents ON documents.id = l.document_id WHERE l.purchase_id = "purchases"."id" AND l.relation_kind = 'primary' AND NOT (${NOT_RECURRING_DOC}))`
+      : undefined,
     status ? eq(purchases.status, status) : undefined,
     ownership ? eq(purchases.ownership, ownership) : undefined,
     entityId ? eq(purchases.entityId, entityId) : undefined,

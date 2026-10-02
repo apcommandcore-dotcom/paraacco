@@ -73,10 +73,24 @@
       "breakpoints": true
     },
     {
+      "idx": 10,
+      "version": "6",
+      "when": 1790696869485,
+      "tag": "0010_recurring_series_single_page",
+      "breakpoints": true
+    },
+    {
       "idx": 11,
       "version": "6",
       "when": 1790697613390,
       "tag": "0011_purchase_objects_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790846164581,
+      "tag": "0012_recurring_periods",
       "breakpoints": true
     },
     {

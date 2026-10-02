@@ -438,7 +438,7 @@ def plan_api(args) -> None:
                 "id": d["documentId"], "ext": lp.rsplit(".", 1)[-1].lower() if "." in lp else "bin",
                 "tag": d.get("financeDocType"), "ownership": d["ownership"], "confirmed": bool(d["ownershipConfirmed"]),
                 "buyer": d.get("buyerTaxId"), "notes": " ".join(filter(None, [d.get("vendorNameRaw"), d.get("displayName")])), "src": lp, "invoice_date": d.get("invoiceDate"), "doc_date": d.get("docDate"),
-                "period": d.get("invoicePeriod"), "vendor": d.get("vendorNameRaw"), "amount": d.get("amountCents"),
+                "period": d.get("invoicePeriod"), "vendor": d.get("vendorName"), "amount": d.get("amountCents"),
             }
             if d.get("entityId") in ("ap", "studio") and doc["ownership"] == "corp":
                 doc["buyer"] = next(k for k, v in ENTITY_TAX_IDS.items() if v == d["entityId"])

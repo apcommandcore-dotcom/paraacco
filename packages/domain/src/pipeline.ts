@@ -85,6 +85,9 @@ export const REAL_EXTRACTION_FIELD_KEYS = new Set([
   "counterparty",
   "classificationConfidence",
   "notes",
+  // 2026-10-01(SPEC V1.06 R11):文件角色(外部寫回/內部擷取都會寫)。billing_month 刻意不列:定期繳費腳本以 user_input
+  // 寫過 339 份,列進來會讓那些文件重跑時被誤判為「已有外部擷取」而跳過 Gemini。
+  "document_role",
 ]);
 
 /** 外部擷取寫回 document_extracted_fields 時,sourceNote 必須以這個前綴開頭。

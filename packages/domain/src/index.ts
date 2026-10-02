@@ -15,3 +15,4 @@ export * from "./reconciliation";
 export * from "./tax-id";
 export * from "./recurring";
 export * from "./purchase-objects";
+export * from "./recurring-periods";

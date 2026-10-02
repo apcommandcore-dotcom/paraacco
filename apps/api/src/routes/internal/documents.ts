@@ -30,6 +30,7 @@ import type { Bindings } from "../../bindings";
 import { createNotification } from "../../notify";
 import { checkDocumentVendor } from "../../vendor-resolution";
 import { attachDocument, ObjectError } from "../../purchase-objects";
+import { matchRecurringDocument } from "../../recurring-matching";
 
 export const internalDocumentsRoute = new Hono<{ Bindings: Bindings }>();
 
@@ -292,6 +293,13 @@ internalDocumentsRoute.post("/:id/vendor-check", async (c) => {
   const db = createDb(c.env.DB);
   const result = await checkDocumentVendor(db, id, body.vendorTaxId ?? null);
   return c.json(result);
+});
+
+// 定期繳費自動掛期(2026-10-01,CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 3.1)——Workflow 最後一步呼叫,
+// 失敗不影響文件本身的處理結果(document-worker 那邊吃掉錯誤)。高信心直接掛,中信心/重複帳單/統編未建檔進待覆核。
+internalDocumentsRoute.post("/:id/match-recurring", async (c) => {
+  const db = createDb(c.env.DB);
+  return c.json(await matchRecurringDocument(db, c.req.param("id")));
 });
 
 // 階段 6(matching):對既有 purchases/assets 評分(見 domain/matching.ts),落地存進

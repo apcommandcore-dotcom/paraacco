@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  advanceSeriesDueDate,
+  autoNotRequiredMarks,
   billingMonthFieldKey,
   computeCoverage,
   expectedMonths,
   isBillingMonthFieldKey,
   lastCompleteMonth,
   suggestBillingMonths,
+  recurringDueStatus,
   suggestSeries,
 } from "./recurring";
+import { advanceDueDate } from "./warranty-status";
 
 describe("expectedMonths", () => {
   it("月繳:含起訖", () => {
@@ -109,5 +113,38 @@ describe("系統建議", () => {
   it("lastCompleteMonth 以台北時間判斷", () => {
     expect(lastCompleteMonth(new Date("2026-09-30T17:00:00Z"))).toBe("2026-09"); // 台北已是 10/1
     expect(lastCompleteMonth(new Date("2026-09-27T03:00:00Z"))).toBe("2026-08");
+  });
+});
+
+// 2026-09-29 定期繳費單一頁(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md)
+
+describe("定期繳費:已繳推下一期", () => {
+  it("月底日期對齊行為和原 /warranty/:id/advance 一致", () => {
+    expect(advanceSeriesDueDate("2026-01-31", "monthly")).toBe(advanceDueDate("2026-01-31", "monthly"));
+    expect(advanceSeriesDueDate("2026-01-31", "monthly")).toBe("2026-02-28");
+    expect(advanceSeriesDueDate("2026-12-31", "bimonthly_even")).toBe("2027-02-28");
+    expect(advanceSeriesDueDate("2026-10-28", "bimonthly_odd")).toBe(advanceDueDate("2026-10-28", "bimonthly"));
+    expect(advanceSeriesDueDate("2024-02-29", "yearly")).toBe("2025-02-28");
+  });
+});
+
+describe("定期繳費:下期繳費狀態", () => {
+  const now = new Date("2026-09-29T04:00:00Z");
+  it("逾期未繳 / 即將繳費 / 未到期 / 未設定", () => {
+    expect(recurringDueStatus("2026-09-28", 7, now)).toBe("overdue");
+    expect(recurringDueStatus("2026-10-03", 7, now)).toBe("due_soon");
+    expect(recurringDueStatus("2026-11-01", 7, now)).toBe("not_due");
+    expect(recurringDueStatus(null, 7, now)).toBe("unscheduled");
+  });
+});
+
+describe("無需帳單的 series(勞退)", () => {
+  it("沒有文件、沒有人工標記的應有月份自動視為無需帳單;有文件的照舊", () => {
+    const series = { cadence: "monthly" as const, startMonth: "2026-06", endMonth: null };
+    const docs = new Map([["2026-07", [{ documentId: "DOC-1", isReminder: false }]]]);
+    const marks = autoNotRequiredMarks(series, "2026-06", "2026-08", docs, [{ month: "2026-08", status: "encrypted", note: null }]);
+    expect(marks.map((m) => `${m.month}:${m.status}`).sort()).toEqual(["2026-06:not_required", "2026-08:encrypted"]);
+    const { summary } = computeCoverage(series, "2026-06", "2026-08", docs, marks);
+    expect(summary).toMatchObject({ expected: 3, present: 1, notRequired: 1, encrypted: 1, missing: 0 });
   });
 });

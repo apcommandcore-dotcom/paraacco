@@ -3,7 +3,7 @@
 // 這幾個欄位的關鍵字篩選。索引涵蓋供應商名稱、發票/訂單/序號、OCR 擷取欄位的值、原始檔名。
 
 import { Hono } from "hono";
-import { inArray } from "drizzle-orm";
+import { getTableColumns, inArray, sql } from "drizzle-orm";
 import { createDb, documents, searchDocumentFts } from "@paraacco/db";
 import type { Bindings } from "../bindings";
 
@@ -15,8 +15,14 @@ searchRoute.get("/", async (c) => {
   const hits = await searchDocumentFts(db, q);
   if (!hits.length) return c.json({ results: [] });
 
+  // 2026-09-29:全域搜尋照舊搜得到所有文件(含定期繳費帳單),結果多帶 recurringSeriesId 讓前端標「定期繳費」,
+  // vendorName 顯示主檔名稱(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.4、vendor-name-from-taxid R-V1)。
   const docs = await db
-    .select()
+    .select({
+      ...getTableColumns(documents),
+      vendorName: sql<string | null>`(SELECT v.name FROM vendors v WHERE v.id = "documents"."vendor_id")`,
+      recurringSeriesId: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'recurring_series_id')`,
+    })
     .from(documents)
     .where(inArray(documents.id, hits.map((h) => h.documentId)));
   const byId = new Map(docs.map((d) => [d.id, d]));

@@ -29,6 +29,11 @@ import { attachDocument, ObjectError } from "../purchase-objects";
 
 export const documentsRoute = new Hono<{ Bindings: Bindings }>();
 
+/** 不是定期繳費文件(沒有 recurring_series_id,也不是任何期次的帳單/證明)。依標題瀏覽、採購案列表共用。 */
+export const NOT_RECURRING_DOC = sql.raw(
+  `NOT EXISTS (SELECT 1 FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'recurring_series_id') AND NOT EXISTS (SELECT 1 FROM recurring_periods rp WHERE rp.bill_doc_id = "documents"."id" OR rp.proof_doc_id = "documents"."id")`,
+);
+
 // ownership 篩選 —— 2026-09-07 補完設計落差任務書任務 2(範圍切換器),沿用既有的
 // ownership 欄位(per/corp/advance/custody),不是新欄位。
 documentsRoute.get("/", async (c) => {
@@ -37,10 +42,14 @@ documentsRoute.get("/", async (c) => {
   const ownership = c.req.query("ownership");
   // vendorId 篩選 —— 2026-09-16「依標題瀏覽」入口新增,見架構文件第 1 節。
   const vendorId = c.req.query("vendorId");
+  // ?excludeRecurring=1(2026-10-01,定期繳費 V1.04 第〇之一節,依標題瀏覽用):排除定期繳費文件——掛了
+  // recurring_series_id,或已出現在任一 recurring_periods 的帳單/證明欄。
+  const excludeRecurring = c.req.query("excludeRecurring") === "1";
   const conditions = [
     status ? eq(documents.status, status) : undefined,
     ownership ? eq(documents.ownership, ownership) : undefined,
     vendorId ? eq(documents.vendorId, vendorId) : undefined,
+    excludeRecurring ? sql`${NOT_RECURRING_DOC}` : undefined,
   ].filter((v) => v !== undefined);
   // ownershipScope(2026-09-28,CODE_TASK V1.04):信用卡帳單/銀行對帳單是「共用」,documents.ownership 的 CHECK
   // 沒有這個值(改要重建表),存在 document_extracted_fields.ownership_scope='shared',列表直接帶出來給前端顯示。
@@ -52,6 +61,9 @@ documentsRoute.get("/", async (c) => {
     // vendorId 為空(統編未建檔/無法辨識)時前端才退回 OCR 店名並標「未建檔」。
     vendorName: sql<string | null>`(SELECT v.name FROM vendors v WHERE v.id = "documents"."vendor_id")`,
     vendorStatus: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'vendor_status')`,
+    // 2026-09-29(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.4):掛上 recurring_series 的文件是定期繳費帳單,
+    // 處理中心/總覽/依標題瀏覽預設不顯示(前端「包含定期繳費」切換),月報表分段。
+    recurringSeriesId: sql<string | null>`(SELECT e.value FROM document_extracted_fields e WHERE e.document_id = "documents"."id" AND e.field_key = 'recurring_series_id')`,
     // 2026-09-29(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md):所屬物件與角色——列表把附件收在主文件底下。
     purchaseId: sql<string | null>`(SELECT l.purchase_id FROM document_purchase_links l WHERE l.document_id = "documents"."id" AND l.relation_kind <> 'duplicate_evidence' LIMIT 1)`,
     purchaseRelation: sql<string | null>`(SELECT l.relation_kind FROM document_purchase_links l WHERE l.document_id = "documents"."id" AND l.relation_kind <> 'duplicate_evidence' LIMIT 1)`,

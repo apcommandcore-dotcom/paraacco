@@ -4,11 +4,13 @@
 // billing_month(可多個月,雙月帳單填兩個)、recurring_series、專案代碼。系統建議由
 // GET /api/recurring/documents/:id 算好(依 match_rule 與發票期別/單據日期),人工按「確認」才寫入
 // (寫入的欄位標 isUserConfirmed,之後重跑判讀不會覆蓋)。
+// 2026-09-29(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.4):確認帶到 series 的文件就歸到「定期繳費」
+// (/recurring),處理中心/總覽/依標題瀏覽預設不再列出;文字從「定期帳單」改成「定期繳費」。
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { apiFetch, type ProjectRow, type RecurringDocumentInfo, type RecurringSeriesRow } from "@/lib/api";
+import { apiFetch, REVIEW_REASON_LABELS, type ProjectRow, type RecurringDocumentInfo, type RecurringReview, type RecurringSeriesRow } from "@/lib/api";
 
 const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -28,6 +30,12 @@ export function RecurringFields({ documentId, projects, onSaved }: { documentId:
   const [projectCode, setProjectCode] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // 2026-10-01(V1.04 3.1):自動掛期的待覆核(中信心、重複帳單、統編未建檔)——一鍵確認掛上。
+  const [reviews, setReviews] = useState<RecurringReview[]>([]);
+  const loadReviews = () =>
+    apiFetch<{ reviews: RecurringReview[] }>(`/api/recurring/reviews?documentId=${documentId}`)
+      .then((d) => setReviews(d.reviews))
+      .catch(() => setReviews([]));
 
   useEffect(() => {
     apiFetch<{ series: RecurringSeriesRow[] }>("/api/recurring/series")
@@ -46,6 +54,8 @@ export function RecurringFields({ documentId, projects, onSaved }: { documentId:
         setProjectCode(d.projectCode ?? "");
       })
       .catch((err) => setMessage(err instanceof Error ? err.message : String(err)));
+    loadReviews();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
   const months = parseMonths(monthsText);
@@ -81,9 +91,36 @@ export function RecurringFields({ documentId, projects, onSaved }: { documentId:
   return (
     <div className="mb-4 border border-border p-3 text-sm">
       <div className="mb-2 flex items-center justify-between">
-        <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">定期帳單/專案</div>
+        <div className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">定期繳費/專案</div>
         {info && (info.billingMonthsConfirmed || info.recurringSeriesConfirmed) && <span className="text-xs text-ok">已人工確認</span>}
       </div>
+
+      {reviews.map((r) => (
+        <div key={r.id} className="mb-2.5 flex items-center justify-between gap-2 border border-warning-line bg-warning-bg px-2 py-1.5 text-xs">
+          <span className="text-warning">
+            自動掛期待確認({REVIEW_REASON_LABELS[r.reason] ?? r.reason}):{series.find((x) => x.id === r.seriesId)?.name ?? r.seriesId ?? "—"} {r.periodKey ?? ""}
+            {r.note ? ` · ${r.note}` : ""}
+          </span>
+          <span className="flex flex-none gap-2">
+            {r.seriesId && r.periodKey && (
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={() => apiFetch(`/api/recurring/reviews/${r.id}/accept`, { method: "POST", body: "{}" }).then(() => { loadReviews(); onSaved?.(); }).catch((err) => setMessage(String(err)))}
+              >
+                確認掛上
+              </button>
+            )}
+            <button
+              type="button"
+              className="text-foreground-3 hover:underline"
+              onClick={() => apiFetch(`/api/recurring/reviews/${r.id}/reject`, { method: "POST", body: "{}" }).then(loadReviews).catch((err) => setMessage(String(err)))}
+            >
+              不是
+            </button>
+          </span>
+        </div>
+      ))}
 
       {hasSuggestion && (
         <div className="mb-2.5 flex items-center justify-between gap-2 border border-info-line bg-info-bg px-2 py-1.5 text-xs">
@@ -99,13 +136,13 @@ export function RecurringFields({ documentId, projects, onSaved }: { documentId:
 
       <div className="space-y-2">
         <label className="block">
-          <span className="mb-1 block text-xs text-muted-foreground">定期帳單</span>
+          <span className="mb-1 block text-xs text-muted-foreground">定期繳費項目(確認後歸到「定期繳費」頁,一般列表預設不顯示)</span>
           <select
             value={seriesId}
             onChange={(e) => setSeriesId(e.target.value)}
             className="h-8 w-full border border-input bg-background px-2 text-xs"
           >
-            <option value="">(不是定期帳單)</option>
+            <option value="">(不是定期繳費)</option>
             {series.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}

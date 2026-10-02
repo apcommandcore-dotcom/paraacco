@@ -9,6 +9,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search as SearchIcon } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { VendorName } from "@/components/vendor-name";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { apiFetch, DOC_STATUS_LABELS, type DocumentRow } from "@/lib/api";
@@ -55,9 +56,14 @@ function SearchResults() {
             <CardContent className="p-4">
               <div className="mb-1 flex items-center justify-between">
                 <span className="font-mono text-xs text-muted-foreground">{r.document.id}</span>
-                <Badge>{DOC_STATUS_LABELS[r.document.status] ?? r.document.status}</Badge>
+                <span className="flex items-center gap-1.5">
+                  {r.document.recurringSeriesId && <Badge variant="info">定期繳費</Badge>}
+                  <Badge>{DOC_STATUS_LABELS[r.document.status] ?? r.document.status}</Badge>
+                </span>
               </div>
-              <div className="mb-1 text-sm">{r.document.vendorNameRaw ?? "（未擷取供應商）"}</div>
+              <div className="mb-1 text-sm">
+                {r.document.vendorNameRaw || r.document.vendorName ? <VendorName doc={r.document} /> : "（未擷取供應商）"}
+              </div>
               <div className="text-xs text-muted-foreground" dangerouslySetInnerHTML={{ __html: escapeExceptBrackets(r.snippet) }} />
             </CardContent>
           </Card>

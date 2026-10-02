@@ -11,10 +11,15 @@
 // 舊的 /purchases、/assets 兩個 redirect 路由(見各自 page.tsx)因此會落到單純的文件列表,
 // 不是專屬畫面,先不特別處理——如果之後要澈底清掉再一併調整那兩個 redirect。
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, Pencil, Search, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { VendorName } from "@/components/vendor-name";
+import { ObjectPanel } from "@/components/object-panel";
+import { ExpandAllToggle, ExpandButton, useExpandState } from "@/components/expand-state";
+import { ItemSubRows, useObjectItems } from "@/components/object-items";
+import { IncludeRecurringToggle, useIncludeRecurring } from "@/components/include-recurring-toggle";
 import { OverviewKpis } from "@/components/overview-kpis";
 import { useScope } from "@/components/scope-context";
 import { Badge } from "@/components/ui/badge";
@@ -47,6 +52,8 @@ import {
   type ActivityLogEntry,
 } from "@/lib/api";
 import { NasLocation } from "@/components/nas-location";
+import { centsToInput, fieldLabel, formatCents } from "@/lib/format";
+import { FieldValue } from "@/components/field-value";
 
 type ViewKind = "document" | "purchase" | "asset";
 
@@ -81,7 +88,10 @@ function jobStatusVariant(status: string): "default" | "warning" | "destructive"
 
 function DocumentsRoot() {
   const searchParams = useSearchParams();
-  const selectedId = searchParams.get("id");
+  // 2026-09-29:?view=purchase&id=PUR-… 開物件詳情(物件 = 一筆消費,CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md
+  // 2.2)。2026-09-18 已拿掉購買案分頁,這裡不加回分頁,只在總覽上開物件 Drawer(月報表、覆核頁、依標題瀏覽、保固頁都連到這裡)。
+  const objectId = searchParams.get("view") === "purchase" ? searchParams.get("id") : null;
+  const selectedId = objectId ? null : searchParams.get("id");
 
   return (
     <AppShell>
@@ -91,7 +101,41 @@ function DocumentsRoot() {
       </div>
       <OverviewKpis />
       <DocumentsView selectedId={selectedId} initialQuery={searchParams.get("q") ?? ""} initialStatus={searchParams.get("status") ?? ""} />
+      <ObjectDrawer purchaseId={objectId} />
     </AppShell>
+  );
+}
+
+function ObjectDrawer({ purchaseId }: { purchaseId: string | null }) {
+  const router = useRouter();
+  const [purchase, setPurchase] = useState<PurchaseRow | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    setPurchase(null);
+    if (!purchaseId) return;
+    apiFetch<{ purchase: PurchaseRow }>(`/api/purchases/${purchaseId}`)
+      .then((d) => setPurchase(d.purchase))
+      .catch(() => setPurchase(null));
+  }, [purchaseId, reloadKey]);
+  return (
+    <Drawer open={!!purchaseId} onClose={() => router.push("/documents")} title={purchaseId ? `物件 ${purchaseId}` : ""}>
+      {purchaseId && (
+        <div className="space-y-3 text-sm">
+          {purchase && (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="font-semibold">{purchase.summary}</span>
+              <span className="text-foreground-2">{purchase.vendorNameRaw}</span>
+              <span className="font-mono">
+                {formatCents(purchase.amountCents, { currency: purchase.currency })}
+              </span>
+              <span className="font-mono text-xs text-foreground-3">{purchase.purchaseDate}</span>
+              <span className="text-xs text-foreground-3">{OWNERSHIP_LABELS[purchase.ownership as OwnershipScope] ?? purchase.ownership}</span>
+            </div>
+          )}
+          <ObjectPanel purchaseId={purchaseId} onChanged={() => setReloadKey((k) => k + 1)} />
+        </div>
+      )}
+    </Drawer>
   );
 }
 
@@ -151,6 +195,8 @@ function DocumentsView({
   const router = useRouter();
   const { scope } = useScope();
   const [documents, setDocuments] = useState<DocumentRow[] | null>(null);
+  const [includeRecurring, setIncludeRecurring] = useIncludeRecurring("overview");
+  const expand = useExpandState("overview");
   const [statusFilter, setStatusFilter] = useState<string>(initialStatus);
   const [query, setQuery] = useState(initialQuery);
   const [detail, setDetail] = useState<DocumentDetail | null>(null);
@@ -247,22 +293,28 @@ function DocumentsView({
     loadDetail(selectedId);
   }, [selectedId, loadDetail]);
 
+  // 2026-09-29(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md):「新增項目」改成在物件裡新增品項——
+  // 物件 = 一筆消費,一份文件只屬於一個物件;這份文件還沒有物件時先建物件(發票明細自動變品項),再加這個品項。
+  // 原本「同一份文件拆成好幾筆獨立採購案、各自貼標籤」的做法停用(品項目前沒有標籤)。
   async function addItem() {
     if (!detail || !itemForm.summary.trim() || !itemForm.amount) return;
     setSubmittingItem(true);
     setError(null);
     try {
-      await apiFetch("/api/purchases", {
+      let purchaseId = detail.purchaseLinks.find((l) => l.relationKind !== "duplicate_evidence")?.purchaseId;
+      if (!purchaseId) {
+        const created = await apiFetch<{ purchaseId: string }>("/api/purchases/merge", {
+          method: "POST",
+          body: JSON.stringify({ documentIds: [detail.document.id] }),
+        });
+        purchaseId = created.purchaseId;
+      }
+      await apiFetch(`/api/purchases/${purchaseId}/items`, {
         method: "POST",
         body: JSON.stringify({
-          ownership: itemForm.ownership,
-          purchaseDate: itemForm.purchaseDate || new Date().toISOString().slice(0, 10),
-          vendorNameRaw: itemForm.vendorNameRaw.trim() || detail.document.vendorNameRaw || "—",
-          summary: itemForm.summary.trim(),
+          name: itemForm.summary.trim(),
           amountCents: Math.round(Number(itemForm.amount) * 100),
-          currency: detail.document.currency ?? "TWD",
-          tags: itemForm.tags.trim() ? itemForm.tags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
-          linkDocumentId: detail.document.id,
+          ownership: itemForm.ownership === detail.document.ownership ? null : itemForm.ownership,
         }),
       });
       setItemForm(EMPTY_ITEM_FORM);
@@ -287,13 +339,22 @@ function DocumentsView({
   // 單據開立日,不像 docDate 會被「繳費期限優先」規則影響),這裡改成優先用 invoiceDate,
   // 只有舊文件或這次 OCR 沒擷取到 invoiceDate 時才 fallback 用 docDate 近似。兩者都沒有的
   // 文件排到最後面,不是排在最前面(避免空值文件洗版到清單頂端)。
+  // 2026-09-29:定期繳費帳單預設不列(「包含定期繳費」切換,見 components/include-recurring-toggle.tsx)。
+  const hiddenRecurring = includeRecurring ? 0 : (documents ?? []).filter((d) => d.recurringSeriesId).length;
+  const objectItems = useObjectItems((documents ?? []).map((d) => (d.purchaseRelation === "primary" ? d.purchaseId : null)));
+  // 2026-09-29:物件的附件(出貨單/收據…)收在主文件底下,不自成一列(主文件列顯示附件數、可展開品項)。
+  const attachmentCount = new Map<string, number>();
+  for (const d of documents ?? []) if (d.purchaseRelation === "supporting" && d.purchaseId) attachmentCount.set(d.purchaseId, (attachmentCount.get(d.purchaseId) ?? 0) + 1);
   const filtered = (documents ?? [])
+    .filter((doc) => doc.purchaseRelation !== "supporting")
+    .filter((doc) => includeRecurring || !doc.recurringSeriesId)
     .filter((doc) => {
       if (!query.trim()) return true;
       const q = query.trim().toLowerCase();
       return (
         doc.id.toLowerCase().includes(q) ||
         (doc.vendorNameRaw ?? "").toLowerCase().includes(q) ||
+        (doc.vendorName ?? "").toLowerCase().includes(q) ||
         (doc.invoiceNo ?? "").toLowerCase().includes(q)
       );
     })
@@ -325,6 +386,8 @@ function DocumentsView({
             </option>
           ))}
         </select>
+        <IncludeRecurringToggle value={includeRecurring} onChange={setIncludeRecurring} hiddenCount={hiddenRecurring} />
+        <ExpandAllToggle value={expand.allExpanded} onChange={expand.setAllExpanded} />
       </div>
 
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
@@ -347,9 +410,16 @@ function DocumentsView({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((doc) => (
-                  <TableRow key={doc.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
+                {filtered.map((doc) => {
+                  const objItems = doc.purchaseId ? (objectItems.get(doc.purchaseId) ?? []) : [];
+                  const open = !!doc.purchaseId && expand.isExpanded(doc.purchaseId);
+                  return (
+                  <Fragment key={doc.id}>
+                  <TableRow className="cursor-pointer" onClick={() => router.push(`/documents?view=document&id=${doc.id}`)}>
                     <TableCell className="whitespace-nowrap font-mono text-xs">
+                      <span className="mr-1 inline-block align-middle">
+                        <ExpandButton expanded={open} onClick={() => doc.purchaseId && expand.toggle(doc.purchaseId)} count={objItems.length} />
+                      </span>
                       {doc.invoiceDate ?? doc.docDate ?? <span className="text-muted-foreground">—</span>}
                     </TableCell>
                     <TableCell className="max-w-[240px]">
@@ -392,19 +462,31 @@ function DocumentsView({
                           </button>
                         </div>
                       )}
-                      <div className="font-mono text-[10px] text-muted-foreground">{doc.id}</div>
+                      <div className="font-mono text-[10px] text-muted-foreground">
+                        {doc.id}
+                        {doc.purchaseId && (
+                          <span className="ml-1.5 text-foreground-3">
+                            · 物件 {doc.purchaseId}
+                            {attachmentCount.get(doc.purchaseId) ? ` · 附件 ${attachmentCount.get(doc.purchaseId)}` : ""}
+                            {objItems.length ? ` · 品項 ${objItems.length}` : ""}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
-                    <TableCell className="max-w-[180px] truncate">{doc.vendorNameRaw ?? "—"}</TableCell>
+                    <TableCell className="max-w-[180px] truncate"><VendorName doc={doc} /></TableCell>
                     <TableCell className="whitespace-nowrap font-mono text-xs">{doc.invoiceNo ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap">
-                      {doc.amountCents != null ? `${doc.currency ?? "TWD"} ${(doc.amountCents / 100).toFixed(2)}` : "—"}
+                      {formatCents(doc.amountCents, { currency: doc.currency })}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{documentOwnershipLabel(doc)}</TableCell>
                     <TableCell className="whitespace-nowrap">
                       <Badge variant={statusVariant(doc.status)}>{DOC_STATUS_LABELS[doc.status] ?? doc.status}</Badge>
                     </TableCell>
                   </TableRow>
-                ))}
+                  {open && <ItemSubRows items={objItems} objectOwnership={doc.ownership} layout={["blank", "name", "blank", "blank", "amount", "ownership", "blank"]} />}
+                  </Fragment>
+                  );
+                })}
               </TableBody>
             </Table>
           )}
@@ -440,8 +522,10 @@ function DocumentsView({
                 <tbody>
                   {detail.fields.map((f) => (
                     <tr key={f.id} className="border-b border-border last:border-0">
-                      <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">{f.label}</td>
-                      <td className="py-1.5">{f.value ?? "—"}</td>
+                      <td className="w-1/3 py-1.5 pr-3 align-top text-xs text-muted-foreground">{fieldLabel(f.fieldKey, f.label)}</td>
+                      <td className="py-1.5">
+                        <FieldValue fieldKey={f.fieldKey} value={f.value} currency={detail.document.currency} />
+                      </td>
                     </tr>
                   ))}
                   {detail.fields.length === 0 && (
@@ -472,30 +556,23 @@ function DocumentsView({
 
             <section>
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">關聯項目</h3>
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">物件與品項</h3>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => {
                     if (!showItemForm) {
-                      setItemForm({
-                        ...EMPTY_ITEM_FORM,
-                        ownership: (detail.document.ownership as OwnershipScope) ?? "corp",
-                        vendorNameRaw: detail.document.vendorNameRaw ?? "",
-                        purchaseDate: detail.document.invoiceDate ?? detail.document.docDate ?? "",
-                      });
+                      setItemForm({ ...EMPTY_ITEM_FORM, ownership: (detail.document.ownership as OwnershipScope) ?? "corp" });
                     }
                     setShowItemForm((v) => !v);
                   }}
                 >
-                  + 新增項目
+                  + 新增品項
                 </Button>
               </div>
 
-              {/* 一張發票列了好幾樣不同的東西時,可以連續按「新增項目」好幾次,每次填不同的
-                  品名/金額,拆成好幾筆各自獨立的項目,全部連回同一份來源文件——document_
-                  purchase_links 本來就是多對多,不會互相覆蓋(見 CODE_TASK_flexible-item-
-                  object-model_20260916.md)。 */}
+              {/* 2026-09-29:物件 = 一筆消費。這份文件還沒有物件時,新增品項會先建物件(發票明細自動成為品項)。
+                  品項歸屬預設跟發票,選不同歸屬就是混合歸屬(月報表依品項拆分小計)。 */}
               {showItemForm && (
                 <div className="mb-3 border border-border bg-nav-sub p-3">
                   <div className="flex flex-wrap items-end gap-3">
@@ -507,15 +584,10 @@ function DocumentsView({
                         className="w-48"
                       />
                     </Field>
-                    <Field label="金額">
-                      <Input
-                        type="number"
-                        value={itemForm.amount}
-                        onChange={(e) => setItemForm((f) => ({ ...f, amount: e.target.value }))}
-                        className="w-28"
-                      />
+                    <Field label="小計(元,折扣填負數)">
+                      <Input type="number" value={itemForm.amount} onChange={(e) => setItemForm((f) => ({ ...f, amount: e.target.value }))} className="w-28" />
                     </Field>
-                    <Field label="範圍">
+                    <Field label="歸屬">
                       <select
                         value={itemForm.ownership}
                         onChange={(e) => setItemForm((f) => ({ ...f, ownership: e.target.value as OwnershipScope }))}
@@ -524,38 +596,12 @@ function DocumentsView({
                         {(Object.keys(OWNERSHIP_LABELS) as OwnershipScope[]).map((k) => (
                           <option key={k} value={k}>
                             {OWNERSHIP_LABELS[k]}
+                            {k === detail.document.ownership ? "(跟發票)" : ""}
                           </option>
                         ))}
                       </select>
                     </Field>
-                    <Field label="供應商">
-                      <Input
-                        value={itemForm.vendorNameRaw}
-                        onChange={(e) => setItemForm((f) => ({ ...f, vendorNameRaw: e.target.value }))}
-                        className="w-36"
-                      />
-                    </Field>
-                    <Field label="採購日期">
-                      <Input
-                        type="date"
-                        value={itemForm.purchaseDate}
-                        onChange={(e) => setItemForm((f) => ({ ...f, purchaseDate: e.target.value }))}
-                        className="w-40"
-                      />
-                    </Field>
-                    <Field label="標籤(選填,逗號分隔)">
-                      <Input
-                        value={itemForm.tags}
-                        onChange={(e) => setItemForm((f) => ({ ...f, tags: e.target.value }))}
-                        placeholder="例:電玩,健身"
-                        className="w-40"
-                      />
-                    </Field>
-                    <Button
-                      size="sm"
-                      disabled={submittingItem || !itemForm.summary.trim() || !itemForm.amount}
-                      onClick={addItem}
-                    >
+                    <Button size="sm" disabled={submittingItem || !itemForm.summary.trim() || !itemForm.amount} onClick={addItem}>
                       儲存
                     </Button>
                   </div>
@@ -567,14 +613,17 @@ function DocumentsView({
                   {detail.purchaseLinks.map((l) => (
                     <li key={`p-${l.purchaseId}`} className="flex items-center justify-between">
                       <span>
-                        {l.summary ?? l.purchaseId}
+                        <button type="button" className="font-mono text-primary hover:underline" onClick={() => router.push(`/documents?view=purchase&id=${l.purchaseId}`)}>
+                          物件 {l.purchaseId}
+                        </button>
+                        <span className="ml-1.5">{l.summary ?? ""}</span>
                         <span className="ml-2 text-muted-foreground">
-                          {l.relationKind}・{l.linkedBy}
+                          {l.relationKind === "primary" ? "主文件" : l.relationKind === "supporting" ? "附件" : l.relationKind}・{l.linkedBy}
                         </span>
                       </span>
                       {l.amountCents != null && (
                         <span className="text-muted-foreground">
-                          {l.currency ?? "TWD"} {(l.amountCents / 100).toFixed(2)}
+                          {formatCents(l.amountCents, { currency: l.currency })}
                         </span>
                       )}
                     </li>
@@ -589,7 +638,7 @@ function DocumentsView({
                       </span>
                       {l.amountCents != null && (
                         <span className="text-muted-foreground">
-                          {l.currency ?? "TWD"} {(l.amountCents / 100).toFixed(2)}
+                          {formatCents(l.amountCents, { currency: l.currency })}
                         </span>
                       )}
                     </li>
@@ -598,7 +647,7 @@ function DocumentsView({
               )}
 
               {detail.purchaseLinks.length === 0 && detail.assetLinks.length === 0 && !showItemForm && (
-                <p className="text-xs text-muted-foreground">還沒有任何關聯項目。</p>
+                <p className="text-xs text-muted-foreground">還不屬於任何物件(到覆核頁「合併到物件」,或按「新增品項」建立)。</p>
               )}
             </section>
 
@@ -625,7 +674,7 @@ function DocumentsView({
                       <tbody>
                         {detail.fields.map((f) => (
                           <tr key={`conf-${f.id}`} className="border-b border-border last:border-0">
-                            <td className="w-1/4 py-1.5 pr-3 text-xs text-muted-foreground">{f.label}</td>
+                            <td className="w-1/4 py-1.5 pr-3 text-xs text-muted-foreground">{fieldLabel(f.fieldKey, f.label)}</td>
                             <td className="py-1.5">
                               <Badge variant={confidenceVariant(f.confidence)}>
                                 {f.confidence != null ? `${f.confidence}%` : "—"}
@@ -724,7 +773,7 @@ function purchaseToForm(p: PurchaseRow): PurchaseEditForm {
     ownership: p.ownership as OwnershipScope,
     vendorNameRaw: p.vendorNameRaw,
     summary: p.summary,
-    amountCents: String(p.amountCents / 100),
+    amountCents: centsToInput(p.amountCents),
     currency: p.currency,
     purchaseDate: p.purchaseDate,
     status: p.status,
@@ -873,7 +922,7 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                     <TableCell className="whitespace-nowrap font-mono text-xs">{p.id}</TableCell>
                     <TableCell className="max-w-[160px] truncate">{p.vendorNameRaw}</TableCell>
                     <TableCell className="max-w-[220px] truncate">{p.summary}</TableCell>
-                    <TableCell className="whitespace-nowrap">{p.currency} {(p.amountCents / 100).toFixed(2)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatCents(p.amountCents, { currency: p.currency })}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{entities.find((en) => en.id === p.entityId)?.name ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{projects.find((pr) => pr.id === p.projectId)?.name ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap">
@@ -919,7 +968,7 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                 </tr>
                 <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">金額</td>
-                  <td className="py-1.5">{detail.purchase.currency} {(detail.purchase.amountCents / 100).toFixed(2)}</td>
+                  <td className="py-1.5">{formatCents(detail.purchase.amountCents, { currency: detail.purchase.currency })}</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">日期</td>
@@ -948,6 +997,10 @@ function PurchasesView({ selectedId }: { selectedId: string | null }) {
                 ))}
               </div>
             )}
+            {/* 2026-09-29:物件(主文件/附件/品項/影片),見 components/object-panel.tsx */}
+            <div className="border-t border-border pt-3">
+              <ObjectPanel purchaseId={detail.purchase.id} />
+            </div>
           </div>
         )}
         {detail && editing && form && (
@@ -1292,7 +1345,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                     <TableCell className="whitespace-nowrap font-mono text-xs">{a.serialNo ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{a.acquiredDate ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                      {a.amountCents != null ? `${a.currency ?? "TWD"} ${(a.amountCents / 100).toLocaleString()}` : "—"}
+                      {formatCents(a.amountCents, { currency: a.currency })}
                     </TableCell>
                     <TableCell className="max-w-[10rem] truncate text-xs text-muted-foreground">{a.note ?? "—"}</TableCell>
                     <TableCell className="whitespace-nowrap">
@@ -1322,7 +1375,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                     brand: detail.asset.brand ?? "",
                     model: detail.asset.model ?? "",
                     acquiredDate: detail.asset.acquiredDate ?? "",
-                    amount: detail.asset.amountCents != null ? String(detail.asset.amountCents / 100) : "",
+                    amount: centsToInput(detail.asset.amountCents),
                     serialNo: detail.asset.serialNo ?? "",
                     note: detail.asset.note ?? "",
                     linkDocumentId: "",
@@ -1365,7 +1418,7 @@ function AssetsView({ selectedId }: { selectedId: string | null }) {
                 </tr>
                 <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">金額</td>
-                  <td className="py-1.5">{detail.asset.amountCents != null ? `${detail.asset.currency ?? "TWD"} ${(detail.asset.amountCents / 100).toLocaleString()}` : "—"}</td>
+                  <td className="py-1.5">{formatCents(detail.asset.amountCents, { currency: detail.asset.currency })}</td>
                 </tr>
                 <tr className="border-b border-border">
                   <td className="w-1/3 py-1.5 pr-3 text-xs text-muted-foreground">備註</td>

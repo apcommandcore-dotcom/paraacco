@@ -61,12 +61,16 @@ export interface ExtractedDocFields {
   classificationConfidence?: "high" | "medium" | "low";
   /** 一句話備註,醫療文件依命名規則 3.1 特別規則過濾,不寫入診斷/處方等細節。 */
   notes?: string;
+  /** 2026-10-01(SPEC-extraction-prompt-rules V1.06 R11):文件角色——bill(帳單/繳費通知)| proof(繳費證明/收據/扣款證明)|
+   * bill_and_proof(超商/代收的繳費聯,同時是帳單和證明)。定期繳費自動掛期時決定掛帳單還是證明;不是定期繳費類單據可為 undefined。 */
+  documentRole?: "bill" | "proof" | "bill_and_proof";
 }
 
 /** 對應規格文件(vaultlink-v2-design-spec)2.5 節的檔名代碼表。 */
 export const DOC_TYPE_CODES = ["INV", "WAR", "RET", "DEL", "ORD", "SUB", "MAN"] as const;
 
 const CLASSIFICATION_CONFIDENCE_VALUES = ["high", "medium", "low"] as const;
+const DOCUMENT_ROLE_VALUES = ["bill", "proof", "bill_and_proof"] as const;
 
 /**
  * 建立擷取欄位用的 prompt。
@@ -98,6 +102,7 @@ export function buildExtractionPrompt(embeddedText?: string): string {
   "financeDocType": "INV(發票) | RCT(收據) | INS(保費/保單) | TAX(稅務) | UTIL(水電) | TEL(電信) | BANK(銀行手續費) | CC(信用卡繳款) | REPAIR(維修) | QUOTE(估價單) | LOAN(借據) | GOV(政府公文) | DUES(公會會費) | ADMIN(行政/簽收文件) | REFUND(退款/折讓) | INCOME(收入) | TRAVEL(差旅/租賃) | MED(醫療)",
   "counterparty": "顯示用對象名稱,≤20 字,優先用比對到的既有供應商全名,查無則用擷取到的原始名稱",
   "classificationConfidence": "high | medium | low —— 對「scope 判斷本身」的信心,不是文字辨識信心,不確定歸屬時誠實填 low 或 medium,不要為了看起來篤定就填 high",
+  "documentRole": "bill(帳單/繳費通知,例:水費、電費、電信帳單) | proof(繳費證明/收據/扣款成功通知) | bill_and_proof(超商/代收的繳費聯,同時是帳單和證明) | null(不是繳費類單據)",
   "notes": "一句話備註(例如「手寫金額不清楚」「疑似公司代墊個人費用」),查無備註則為 null。醫療收據只能寫日期/金額/對象相關的備註,絕對不要寫入臨床診斷、處方藥名等細節"
 }`;
 
@@ -192,5 +197,8 @@ function normalizeFields(obj: Record<string, unknown>): ExtractedDocFields {
       ? (classificationConfidence as ExtractedDocFields["classificationConfidence"])
       : undefined,
     notes: str(obj.notes),
+    documentRole: (DOCUMENT_ROLE_VALUES as readonly string[]).includes(str(obj.documentRole) ?? "")
+      ? (str(obj.documentRole) as ExtractedDocFields["documentRole"])
+      : undefined,
   };
 }

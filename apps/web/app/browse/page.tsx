@@ -14,19 +14,29 @@
 //
 // 側邊欄導覽入口(拿掉購買案/資產/文件庫)按計畫排在這個頁面做完、Theo 實際用過確認可用
 // 之後才切換,這次先不動 app-shell.tsx 的 NAV。
+//
+// 2026-10-01(CODE_TASK_recurring-bills-single-page_20260929_V1.04.md 第〇之一節,覆蓋 V1.01 2.4):依標題瀏覽完全不出現
+// 定期繳費——分類卡片(電信/勞健保/水電瓦斯…)、只出現在定期繳費的供應商、已掛定期繳費的文件與物件一律由 API 排除
+// (?browse=1、?excludeRecurring=1),也不放連到定期繳費頁的卡片、不提供「包含定期繳費」切換。
+// 舊網址 /browse?category=telecom|insurance|utilities 由 next.config 301 到 /recurring 對應分類(這裡另有前端轉址當保險)。
 
-import { Suspense, useEffect, useState } from "react";
+import { Fragment, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { useScope } from "@/components/scope-context";
+import { ExpandAllToggle, ExpandButton, useExpandState } from "@/components/expand-state";
+import { ItemSubRows, useObjectItems } from "@/components/object-items";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatCents } from "@/lib/format";
 import {
   apiFetch,
+  BROWSE_TO_RECURRING_CATEGORIES,
   CASE_LINK_ROLE_LABELS,
+  isRecurringBrowseCategory,
   DOC_STATUS_LABELS,
   type CaseGroup,
   type CategoryRow,
@@ -35,11 +45,19 @@ import {
   type VendorRow,
 } from "@/lib/api";
 
+const BROWSE_INTRO = "照分類找一般消費的供應商與文件/採購案。水電瓦斯、電信、勞健保等定期繳費請到「定期繳費」頁。";
+
 function BrowseRoot() {
   const searchParams = useSearchParams();
   const categoryId = searchParams.get("category");
   const vendorId = searchParams.get("vendor");
+  const router = useRouter();
+  const recurringTarget = categoryId ? BROWSE_TO_RECURRING_CATEGORIES[categoryId] : undefined;
+  useEffect(() => {
+    if (recurringTarget) router.replace(`/recurring?category=${recurringTarget.join(",")}`);
+  }, [recurringTarget, router]);
 
+  if (recurringTarget) return null;
   if (vendorId && categoryId) return <VendorDetail categoryId={categoryId} vendorId={vendorId} />;
   if (categoryId) return <VendorList categoryId={categoryId} />;
   return <CategoryList />;
@@ -69,8 +87,8 @@ function CategoryList() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiFetch<{ categories: CategoryRow[] }>("/api/categories")
-      .then((d) => setCategories(d.categories))
+    apiFetch<{ categories: CategoryRow[] }>("/api/categories?browse=1")
+      .then((d) => setCategories(d.categories.filter((c) => !isRecurringBrowseCategory(c))))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
 
@@ -80,19 +98,20 @@ function CategoryList() {
         <h1 className="m-0 text-[23px] font-extrabold tracking-tight">依標題瀏覽</h1>
         <span className="font-mono text-[10px] tracking-[0.16em] text-foreground-3">BROWSE</span>
       </div>
-      <p className="mb-5 text-sm text-foreground-2">照分類(像 NAS 資料夾一樣)找對應的供應商,再看底下的文件/採購案。</p>
+      <p className="mb-5 text-sm text-foreground-2">{BROWSE_INTRO}</p>
 
       {error && <div className="mb-4 border border-destructive-line bg-destructive-bg p-3 text-sm text-destructive">{error}</div>}
       {categories === null && <div className="text-sm text-muted-foreground">載入中…</div>}
-      {categories?.length === 0 && <div className="text-sm text-muted-foreground">還沒有任何分類。</div>}
+      {categories?.length === 0 && (
+        <div className="border border-dashed border-line p-6 text-sm text-muted-foreground">
+          還沒有一般消費分類。{BROWSE_INTRO}
+          <div className="mt-1 text-xs">一般消費分類可以在「管理 → 供應商與分類」新增。</div>
+        </div>
+      )}
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
         {categories?.map((cat) => (
-          <Link
-            key={cat.id}
-            href={`/browse?category=${cat.id}`}
-            className="flex flex-col gap-1 border border-line bg-card p-4 no-underline hover:border-border"
-          >
+          <Link key={cat.id} href={`/browse?category=${cat.id}`} className="flex flex-col gap-1 border border-line bg-card p-4 no-underline hover:border-border">
             <span className="text-[15px] font-semibold text-foreground">{cat.name}</span>
             <span className="font-mono text-[10px] text-foreground-3">{cat.id}</span>
           </Link>
@@ -111,7 +130,7 @@ function VendorList({ categoryId }: { categoryId: string }) {
     apiFetch<{ categories: CategoryRow[] }>("/api/categories")
       .then((d) => setCategory(d.categories.find((c) => c.id === categoryId) ?? null))
       .catch(() => {});
-    apiFetch<{ vendors: VendorRow[] }>(`/api/vendors?categoryId=${categoryId}`)
+    apiFetch<{ vendors: VendorRow[] }>(`/api/vendors?categoryId=${categoryId}&browse=1`)
       .then((d) => setVendors(d.vendors))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [categoryId]);
@@ -152,6 +171,8 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
   const [purchases, setPurchases] = useState<PurchaseRow[] | null>(null);
   const [caseGroups, setCaseGroups] = useState<Map<string, CaseGroup>>(new Map());
   const [error, setError] = useState<string | null>(null);
+  const expand = useExpandState("browse");
+  const objectItems = useObjectItems((purchases ?? []).map((p) => p.id));
 
   useEffect(() => {
     apiFetch<{ categories: CategoryRow[] }>("/api/categories")
@@ -166,7 +187,7 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
     const q = scope ? `&ownership=${scope}` : "";
     setDocuments(null);
     setPurchases(null);
-    apiFetch<{ documents: DocumentRow[] }>(`/api/documents?vendorId=${vendorId}${q}`)
+    apiFetch<{ documents: DocumentRow[] }>(`/api/documents?vendorId=${vendorId}&excludeRecurring=1${q}`)
       .then((d) => {
         setDocuments(d.documents);
         // 每份文件查一次有沒有案件關聯——文件數通常不多(單一供應商底下),先求能動,
@@ -185,13 +206,15 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
         });
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-    apiFetch<{ purchases: PurchaseRow[] }>(`/api/purchases?vendorId=${vendorId}${q}`)
+    apiFetch<{ purchases: PurchaseRow[] }>(`/api/purchases?vendorId=${vendorId}&excludeRecurring=1${q}`)
       .then((d) => setPurchases(d.purchases))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [vendorId, scope]);
 
   const groupedCaseDocIds = new Set([...caseGroups.values()].flatMap((g) => g.documents.map((d) => d.documentId)));
-  const ungroupedDocuments = documents?.filter((d) => !groupedCaseDocIds.has(d.id)) ?? [];
+  // 2026-09-29:物件的附件收在物件底下(下方「採購案(物件)」可展開品項),文件清單只列主文件與獨立文件。
+  const ungroupedDocuments =
+    documents?.filter((d) => !groupedCaseDocIds.has(d.id) && d.purchaseRelation !== "supporting" && !d.recurringSeriesId) ?? [];
 
   return (
     <AppShell>
@@ -255,7 +278,10 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
                 <TableBody>
                   {ungroupedDocuments.map((d) => (
                     <TableRow key={d.id}>
-                      <TableCell className="font-mono text-xs">{d.id}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {d.id}
+                        {d.purchaseId && <div className="text-[10px] text-foreground-3">物件 {d.purchaseId}</div>}
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{d.docTypeCode ?? "—"}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{d.docDate ?? "—"}</TableCell>
                       <TableCell>
@@ -271,7 +297,10 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
       </div>
 
       <div>
-        <h2 className="mb-2 text-sm font-bold">採購案</h2>
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="m-0 text-sm font-bold">採購案(物件)</h2>
+          <ExpandAllToggle value={expand.allExpanded} onChange={expand.setAllExpanded} />
+        </div>
         <Card>
           <CardContent className="p-0">
             {purchases === null && <div className="p-4 text-sm text-muted-foreground">載入中…</div>}
@@ -287,16 +316,31 @@ function VendorDetail({ categoryId, vendorId }: { categoryId: string; vendorId: 
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {purchases.map((p) => (
-                    <TableRow key={p.id} className="cursor-pointer" onClick={() => router.push(`/documents?view=purchase&id=${p.id}`)}>
-                      <TableCell className="font-mono text-xs">{p.id}</TableCell>
-                      <TableCell>{p.summary}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {p.currency} {(p.amountCents / 100).toFixed(2)}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{p.purchaseDate}</TableCell>
-                    </TableRow>
-                  ))}
+                  {purchases.map((p) => {
+                    const items = objectItems.get(p.id) ?? [];
+                    const open = expand.isExpanded(p.id);
+                    return (
+                      <Fragment key={p.id}>
+                        <TableRow className="cursor-pointer" onClick={() => router.push(`/documents?view=purchase&id=${p.id}`)}>
+                          <TableCell className="font-mono text-xs">
+                            <span className="mr-1 inline-block align-middle">
+                              <ExpandButton expanded={open} onClick={() => expand.toggle(p.id)} count={items.length} />
+                            </span>
+                            {p.id}
+                          </TableCell>
+                          <TableCell>
+                            {p.summary}
+                            {items.length > 0 && <span className="ml-1.5 text-[10px] text-foreground-3">品項 {items.length}</span>}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {formatCents(p.amountCents, { currency: p.currency })}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{p.purchaseDate}</TableCell>
+                        </TableRow>
+                        {open && <ItemSubRows items={items} objectOwnership={p.ownership} layout={["blank", "name", "amount", "ownership"]} />}
+                      </Fragment>
+                    );
+                  })}
                 </TableBody>
               </Table>
             )}

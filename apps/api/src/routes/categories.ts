@@ -3,15 +3,17 @@
 
 import { Hono } from "hono";
 import { categories, createDb } from "@paraacco/db";
+import { isRecurringBrowseCategory } from "@paraacco/domain";
 import type { Bindings } from "../bindings";
 import { canWrite } from "../middleware/auth";
 
 export const categoriesRoute = new Hono<{ Bindings: Bindings }>();
 
+// ?browse=1(2026-10-01,定期繳費 V1.04 第〇之一節):依標題瀏覽用,排除定期繳費分類(電信/勞健保/水電瓦斯…)。
 categoriesRoute.get("/", async (c) => {
   const db = createDb(c.env.DB);
   const rows = await db.select().from(categories);
-  return c.json({ categories: rows });
+  return c.json({ categories: c.req.query("browse") === "1" ? rows.filter((r) => !isRecurringBrowseCategory(r)) : rows });
 });
 
 categoriesRoute.post("/", async (c) => {

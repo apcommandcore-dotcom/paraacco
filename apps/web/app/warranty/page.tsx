@@ -12,6 +12,10 @@
 // 2026-09-26(migration 0008):擴充成「保固、訂閱與定期繳費」——水電、網路、瓦斯、勞健保、稅金
 // 等定期繳交費用放在同一頁(type='recurring_bill'),加細分類、金額、繳費方式、用戶號碼欄位,
 // 頂部分頁篩選類型;定期繳費/訂閱列有「已繳」按鈕,把到期日推到下一期(API: POST /:id/advance)。
+//
+// 2026-09-29(CODE_TASK_recurring-bills-single-page_20260929_V1.01.md 2.3):改回「保固與訂閱」——定期繳費搬到
+// /recurring「定期繳費」;分頁只剩 全部/訂閱/保固,類型下拉拿掉定期繳費,分類只留軟體/硬體/其他。
+// 訂閱(例 Claude Pro)不算定期繳費,留在這頁。
 
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -23,8 +27,10 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatCents } from "@/lib/format";
 import {
   apiFetch,
+  COVERAGE_CATEGORY_LABELS,
   OWNERSHIP_LABELS,
   PAYMENT_METHOD_LABELS,
   RENEWAL_CYCLE_LABELS,
@@ -39,29 +45,37 @@ import {
   type WarrantyType,
 } from "@/lib/api";
 
-// 定期繳費的「過期」語意是「逾期未繳」,措辭跟保固的「已過期」分開。
+interface ItemWarranty {
+  itemId: string;
+  purchaseId: string;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  serialNo: string | null;
+  vendorName: string | null;
+  ownership: OwnershipScope;
+  startDate: string | null;
+  endDate: string;
+  status: WarrantyStatus;
+}
+
 function statusLabel(item: WarrantyItem): string {
-  if (item.type === "recurring_bill") {
-    if (item.status === "expired") return "逾期未繳";
-    if (item.status === "due_soon") return "即將繳費";
-    return "未到期";
-  }
   return WARRANTY_STATUS_LABELS[item.status];
 }
 
-function formatAmount(cents: number | null): string {
-  if (cents === null) return "—";
-  return `$${(cents / 100).toLocaleString("zh-TW", { maximumFractionDigits: 2 })}`;
-}
+/** 這頁能新增的類型(定期繳費改到 /recurring)。 */
+type CoverageType = Exclude<WarrantyType, "recurring_bill">;
+const COVERAGE_TYPES: CoverageType[] = ["subscription", "warranty"];
+
+const formatAmount = (cents: number | null) => formatCents(cents);
 
 // 各類型建議的預設分類與週期,切換類型時帶入(使用者仍可改)。
-const TYPE_DEFAULTS: Record<WarrantyType, { category: string; renewalCycle: RenewalCycle; reminderDaysBefore: string }> = {
+const TYPE_DEFAULTS: Record<CoverageType, { category: string; renewalCycle: RenewalCycle; reminderDaysBefore: string }> = {
   warranty: { category: "device", renewalCycle: "one_time", reminderDaysBefore: "30" },
   subscription: { category: "software", renewalCycle: "monthly", reminderDaysBefore: "7" },
-  recurring_bill: { category: "water", renewalCycle: "bimonthly", reminderDaysBefore: "7" },
 };
 
-type TypeFilter = "all" | WarrantyType;
+type TypeFilter = "all" | CoverageType;
 
 function statusVariant(status: WarrantyStatus): "success" | "warning" | "destructive" {
   if (status === "expired") return "destructive";
@@ -72,7 +86,7 @@ function statusVariant(status: WarrantyStatus): "success" | "warning" | "destruc
 function emptyForm(entityType: "" | "asset" = "", entityId = "", ownership: OwnershipScope = "corp") {
   return {
     name: "",
-    type: "warranty" as WarrantyType,
+    type: "warranty" as CoverageType,
     category: "device",
     vendorName: "",
     ownership,
@@ -93,6 +107,8 @@ function WarrantyRoot() {
   const searchParams = useSearchParams();
   const { scope } = useScope();
   const [items, setItems] = useState<WarrantyItem[] | null>(null);
+  // 2026-09-29:保固記在物件品項上(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md 2.5、5.1),唯讀列出,點回物件編輯。
+  const [itemWarranties, setItemWarranties] = useState<ItemWarranty[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
   const [submitting, setSubmitting] = useState(false);
@@ -104,8 +120,11 @@ function WarrantyRoot() {
 
   function load() {
     const path = scope ? `/api/warranty?ownership=${scope}` : "/api/warranty";
-    apiFetch<{ items: WarrantyItem[] }>(path)
-      .then((d) => setItems(d.items))
+    apiFetch<{ items: WarrantyItem[]; itemWarranties?: ItemWarranty[] }>(path)
+      .then((d) => {
+        setItems(d.items);
+        setItemWarranties(d.itemWarranties ?? []);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }
 
@@ -123,8 +142,10 @@ function WarrantyRoot() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newEntityId]);
 
-  const displayItems = items
-    ? items.filter((i) => (!filterEntityId || i.entityId === filterEntityId) && (typeFilter === "all" || i.type === typeFilter))
+  // API 預設就不回 recurring_bill;這裡再擋一次(舊版 API 還沒部署時)。
+  const displayItemsAll = items ? items.filter((i) => i.type !== "recurring_bill") : null;
+  const displayItems = displayItemsAll
+    ? displayItemsAll.filter((i) => (!filterEntityId || i.entityId === filterEntityId) && (typeFilter === "all" || i.type === typeFilter))
     : null;
   const typeCounts = (items ?? []).reduce<Record<string, number>>((acc, i) => ((acc[i.type] = (acc[i.type] ?? 0) + 1), acc), {});
 
@@ -184,7 +205,7 @@ function WarrantyRoot() {
     <AppShell>
       <div className="mb-1.5 flex items-center justify-between">
         <div className="flex items-baseline gap-2.5">
-          <h1 className="m-0 text-[23px] font-extrabold tracking-tight">保固、訂閱與定期繳費</h1>
+          <h1 className="m-0 text-[23px] font-extrabold tracking-tight">保固與訂閱</h1>
           <span className="font-mono text-[10px] tracking-[0.16em] text-foreground-3">COVERAGE</span>
         </div>
         <Button size="sm" onClick={() => setShowForm((v) => !v)}>
@@ -192,10 +213,16 @@ function WarrantyRoot() {
           新增
         </Button>
       </div>
-      <p className="mb-4 text-sm text-foreground-2">保固到期、軟體訂閱續約,以及水電、網路、瓦斯、勞健保、稅金等定期繳費提醒——可以獨立存在,不用一定要掛在某個資產上。</p>
+      <p className="mb-4 text-sm text-foreground-2">
+        保固到期、軟體訂閱續約提醒——可以獨立存在,不用一定要掛在某個資產上。水電、網路、瓦斯、勞健保、稅金等定期繳費請到{" "}
+        <a href="/recurring" className="text-primary hover:underline">
+          定期繳費
+        </a>
+        。
+      </p>
 
       <div className="mb-4 flex gap-1 border-b border-line-2">
-        {(["all", "recurring_bill", "subscription", "warranty"] as TypeFilter[]).map((t) => (
+        {(["all", ...COVERAGE_TYPES] as TypeFilter[]).map((t) => (
           <button
             key={t}
             type="button"
@@ -203,7 +230,9 @@ function WarrantyRoot() {
             className={`-mb-px border-b-2 px-3 py-1.5 text-sm ${typeFilter === t ? "border-foreground font-semibold" : "border-transparent text-foreground-2 hover:text-foreground"}`}
           >
             {t === "all" ? "全部" : WARRANTY_TYPE_LABELS[t]}
-            <span className="ml-1 font-mono text-[10px] text-foreground-3">{t === "all" ? (items?.length ?? 0) : (typeCounts[t] ?? 0)}</span>
+            <span className="ml-1 font-mono text-[10px] text-foreground-3">
+              {t === "all" ? (displayItemsAll?.length ?? 0) + itemWarranties.length : (typeCounts[t] ?? 0) + (t === "warranty" ? itemWarranties.length : 0)}
+            </span>
           </button>
         ))}
       </div>
@@ -222,7 +251,7 @@ function WarrantyRoot() {
       {showForm && (
         <Card className="mb-5">
           <CardHeader>
-            <CardTitle>新增保固/訂閱/定期繳費</CardTitle>
+            <CardTitle>新增保固/訂閱</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap items-end gap-3">
@@ -233,12 +262,12 @@ function WarrantyRoot() {
                 <select
                   value={form.type}
                   onChange={(e) => {
-                    const type = e.target.value as WarrantyType;
+                    const type = e.target.value as CoverageType;
                     setForm((f) => ({ ...f, type, ...TYPE_DEFAULTS[type] }));
                   }}
                   className="h-9 border border-input bg-background px-2 text-sm"
                 >
-                  {(Object.keys(WARRANTY_TYPE_LABELS) as WarrantyType[]).map((k) => (
+                  {COVERAGE_TYPES.map((k) => (
                     <option key={k} value={k}>
                       {WARRANTY_TYPE_LABELS[k]}
                     </option>
@@ -251,7 +280,7 @@ function WarrantyRoot() {
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                   className="h-9 border border-input bg-background px-2 text-sm"
                 >
-                  {Object.entries(WARRANTY_CATEGORY_LABELS).map(([k, label]) => (
+                  {Object.entries(COVERAGE_CATEGORY_LABELS).map(([k, label]) => (
                     <option key={k} value={k}>
                       {label}
                     </option>
@@ -274,7 +303,7 @@ function WarrantyRoot() {
                   ))}
                 </select>
               </Field>
-              <Field label={form.type === "recurring_bill" ? "下次繳費期限" : "到期日"}>
+              <Field label={form.type === "subscription" ? "下次續約/扣款日" : "到期日"}>
                 <Input type="date" value={form.endDate} onChange={(e) => setForm((f) => ({ ...f, endDate: e.target.value }))} className="w-40" />
               </Field>
               <Field label="週期">
@@ -327,6 +356,53 @@ function WarrantyRoot() {
                 儲存
               </Button>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {typeFilter !== "subscription" && !filterEntityId && itemWarranties.length > 0 && (
+        <Card className="mb-5">
+          <CardHeader>
+            <CardTitle>物件品項的保固({itemWarranties.length})</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>品項</TableHead>
+                  <TableHead>序號</TableHead>
+                  <TableHead>供應商</TableHead>
+                  <TableHead>範圍</TableHead>
+                  <TableHead>保固起訖</TableHead>
+                  <TableHead>狀態</TableHead>
+                  <TableHead>物件</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {itemWarranties.map((w) => (
+                  <TableRow key={w.itemId}>
+                    <TableCell className="max-w-[220px] truncate">
+                      {w.name}
+                      {(w.brand || w.model) && <span className="ml-1 text-xs text-muted-foreground">{[w.brand, w.model].filter(Boolean).join(" ")}</span>}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{w.serialNo ?? "—"}</TableCell>
+                    <TableCell className="max-w-[140px] truncate text-xs text-muted-foreground">{w.vendorName ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{OWNERSHIP_LABELS[w.ownership] ?? w.ownership}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      {w.startDate ?? "—"} ~ {w.endDate}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(w.status)}>{WARRANTY_STATUS_LABELS[w.status]}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <button type="button" className="font-mono text-xs text-primary hover:underline" onClick={() => router.push(`/documents?view=purchase&id=${w.purchaseId}`)}>
+                        {w.purchaseId}
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </CardContent>
         </Card>
       )}
