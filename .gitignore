@@ -18,3 +18,4 @@ _snapshots/
 .batch-import-encrypted.log
 .batch-ingest-pending-renames.tsv
 __pycache__/
+.claude/
