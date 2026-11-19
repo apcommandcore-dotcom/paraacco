@@ -288,7 +288,7 @@ export function ObjectPanel({ purchaseId, onChanged }: { purchaseId: string; onC
                       disabled={busy}
                       onBlur={(e) => e.target.value !== (it.warrantyEndDate ?? "") && act(`/api/purchase-items/${it.id}`, { warrantyEndDate: e.target.value || null })}
                       className="h-7 border border-input bg-background px-1 text-[11px]"
-                      title="保固迄日(填了就會出現在「保固與訂閱」頁)"
+                      title="保固迄日(填了就會出現在「設備保固」頁)"
                     />
                   </td>
                   <td className="py-1 text-foreground-3">{it.documentIds.length + it.attachmentIds.length || ""}</td>

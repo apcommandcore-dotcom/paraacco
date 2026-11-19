@@ -99,12 +99,13 @@ export async function runWarrantyDueSweep(db: Db, now: Date = new Date()): Promi
   const rows = await db.select().from(warrantySubscriptions);
   for (const row of rows) {
     // 2026-09-29:定期繳費搬到 recurring_series(見 runRecurringPeriodSweep),warranty 裡舊的 recurring_bill 列唯讀,不再提醒。
-    if (row.type === "recurring_bill") continue;
+    // 2026-11-19:訂閱併入定期繳費,subscription 列同樣唯讀不提醒;這裡只剩設備保固。
+    if (row.type !== "warranty") continue;
     const status = computeWarrantyStatus({ endDate: row.endDate, reminderDaysBefore: row.reminderDaysBefore }, now);
     if (status !== "due_soon") continue;
     await createNotification(db, {
       type: "warranty_due",
-      title: "保固/訂閱即將到期",
+      title: "設備保固即將到期",
       message: `${row.name} 將在 ${row.endDate} 到期。`,
       entityType: "warranty_subscription",
       entityId: row.id,

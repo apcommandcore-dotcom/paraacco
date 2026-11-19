@@ -213,6 +213,8 @@ function DocumentsView({
   const [showItemForm, setShowItemForm] = useState(false);
   const [itemForm, setItemForm] = useState(EMPTY_ITEM_FORM);
   const [submittingItem, setSubmittingItem] = useState(false);
+  // 覆核確認(2026-11-19)—— 抽屜裡直接按「確認無誤」把 review 改成 archived,不用跳去 /review。
+  const [confirming, setConfirming] = useState(false);
 
   // 文件顯示名稱行內編輯(2026-09-18)—— 清單拿掉購買案/資產分頁後,「文件」欄改成可編輯
   // 的顯示名稱,不是唯讀 DOC ID。OCR 現在會在該欄還是 null 時用品名(itemName)填入預設值
@@ -292,6 +294,28 @@ function DocumentsView({
     setItemForm(EMPTY_ITEM_FORM);
     loadDetail(selectedId);
   }, [selectedId, loadDetail]);
+
+  // 覆核確認 / 退回待覆核(2026-11-19)—— 沿用既有 POST /api/documents/:id/status(已支援 archived 與
+  // archivedAt 寫入),不需改 API。確認後重抓詳情與清單,讓狀態徽章與待覆核數立即更新。
+  async function setReviewStatus(status: "archived" | "review") {
+    if (!detail || confirming) return;
+    setConfirming(true);
+    try {
+      await apiFetch(`/api/documents/${detail.document.id}/status`, {
+        method: "POST",
+        body: JSON.stringify({
+          status,
+          note: status === "archived" ? "覆核確認無誤" : "退回待覆核",
+        }),
+      });
+      loadDetail(detail.document.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConfirming(false);
+    }
+  }
 
   // 2026-09-29(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md):「新增項目」改成在物件裡新增品項——
   // 物件 = 一筆消費,一份文件只屬於一個物件;這份文件還沒有物件時先建物件(發票明細自動變品項),再加這個品項。
@@ -514,6 +538,22 @@ function DocumentsView({
                   </span>
                 )}
               </div>
+              {detail.document.status === "review" && (
+                <Button className="mt-3 w-full" disabled={confirming} onClick={() => setReviewStatus("archived")}>
+                  <Check size={14} className="mr-1.5" />
+                  {confirming ? "確認中…" : "確認無誤(歸檔)"}
+                </Button>
+              )}
+              {detail.document.status === "archived" && (
+                <button
+                  type="button"
+                  disabled={confirming}
+                  onClick={() => setReviewStatus("review")}
+                  className="mt-2 text-xs text-muted-foreground hover:text-foreground hover:underline"
+                >
+                  退回待覆核
+                </button>
+              )}
             </section>
 
             <section>

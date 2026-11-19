@@ -558,7 +558,7 @@ export const REVIEW_REASON_LABELS: Record<string, string> = {
 
 // ---------------------------------------------------------------------------
 // 定期繳費(2026-09-29,CODE_TASK_recurring-bills-single-page_20260929_V1.01.md)——跟 packages/domain 的
-// RECURRING_CATEGORIES 一致(API 驗證用那一份)。訂閱不算定期繳費,留在「保固與訂閱」。
+// RECURRING_CATEGORIES 一致(API 驗證用那一份)。2026-11-19:訂閱併入定期繳費(分類 software),「保固與訂閱」改為「設備保固」。
 // ---------------------------------------------------------------------------
 export const RECURRING_CATEGORY_LABELS: Record<string, string> = {
   water: "水費",
@@ -573,6 +573,7 @@ export const RECURRING_CATEGORY_LABELS: Record<string, string> = {
   insurance: "保險",
   rent: "租金",
   membership: "會費",
+  software: "訂閱/軟體",
   statement: "信用卡/對帳單",
   other: "其他",
 };

@@ -242,6 +242,7 @@ export const RECURRING_CATEGORIES = [
   "insurance",
   "rent",
   "membership",
+  "software", // 2026-11-19:訂閱(軟體/線上服務,例 Claude Pro)從「保固與訂閱」併入定期繳費
   "statement",
   "other",
 ] as const;
@@ -260,6 +261,7 @@ export const RECURRING_CATEGORY_LABELS: Record<RecurringCategory, string> = {
   insurance: "保險",
   rent: "租金",
   membership: "會費",
+  software: "訂閱/軟體",
   statement: "信用卡/對帳單",
   other: "其他",
 };

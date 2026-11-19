@@ -28,7 +28,7 @@ const TABS: { href: string; label: string; en: string; countKey?: "process"; als
   { href: "/documents", label: "總覽", en: "OVERVIEW", alsoActive: ["/dashboard"] },
   { href: "/inbox", label: "處理中心", en: "PROCESS", countKey: "process" },
   { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
-  { href: "/warranty", label: "保固與訂閱", en: "COVERAGE" },
+  { href: "/warranty", label: "設備保固", en: "WARRANTY" },
   { href: "/recurring", label: "定期繳費", en: "RECURRING" },
   { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
   { href: "/admin", label: "管理後台", en: "ADMIN" },

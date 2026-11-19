@@ -355,7 +355,7 @@ export function ItemContextMenu({
             <input type="date" value={warranty.start} onChange={(e) => setWarranty((w) => ({ ...w, start: e.target.value }))} className={inp} />
           </label>
           <label className="block text-[10px] text-foreground-3">
-            保固迄(填了會出現在「保固與訂閱」)
+            保固迄(填了會出現在「設備保固」)
             <input type="date" value={warranty.end} onChange={(e) => setWarranty((w) => ({ ...w, end: e.target.value }))} className={inp} />
           </label>
           <button type="button" disabled={busy} className="border border-line px-2 py-1 hover:bg-muted" onClick={() => apply({ warrantyStartDate: warranty.start || null, warrantyEndDate: warranty.end || null })}>

@@ -3,6 +3,8 @@
 // 原始檔位置(2026-09-28,CODE_TASK_local-originals-nas-path_20260927_V1.01.md 第六節 2)——
 // storage='local' 的文件原始檔只留 NAS,網頁不再串流檔案,改顯示 NAS 完整路徑讓使用者自己開。
 // smb:// 連結很多瀏覽器會擋,所以以「複製」為主;另外附 macOS Finder 掛載後的 /Volumes 路徑。
+// 2026-11-19:路徑本身改成可點——連到 paraacco-open://open/<share>/<相對路徑>,由 Mac 上的
+// ParaaccoOpen.app(scripts/paraacco-open/)接手:必要時掛載 NAS,再用 Chrome 開啟 PDF。
 
 import { useState } from "react";
 import { Check, Copy, FolderOpen } from "lucide-react";
@@ -44,6 +46,13 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+/** smb://host/share/a/b → paraacco-open://open/share/a/b(每段 URL 編碼),給 ParaaccoOpen.app 接手。 */
+function toOpenHref(fullPath: string): string | null {
+  const m = /^smb:\/\/[^/]+\/(.+)$/.exec(fullPath);
+  if (!m) return null;
+  return `paraacco-open://open/${m[1].split("/").map(encodeURIComponent).join("/")}`;
+}
+
 export function NasLocation({ file, localRoot }: { file: DocumentFile; localRoot?: string }) {
   if (!file.localPath) return null;
   const root = (localRoot ?? DEFAULT_LOCAL_ROOT).replace(/\/+$/, "");
@@ -51,6 +60,7 @@ export function NasLocation({ file, localRoot }: { file: DocumentFile; localRoot
   const volumesPath = toVolumesPath(fullPath);
   const smbHref = `${root}/${file.localPath.split("/").map(encodeURIComponent).join("/")}`;
   const fileName = file.localPath.split("/").pop() ?? file.originalFileName;
+  const openHref = toOpenHref(fullPath);
 
   return (
     <section className="border border-border bg-muted p-3 text-xs">
@@ -59,7 +69,17 @@ export function NasLocation({ file, localRoot }: { file: DocumentFile; localRoot
         原始檔位置(NAS)
       </div>
       <div className="flex items-start gap-2">
-        <code className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-foreground">{fullPath}</code>
+        {openHref ? (
+          <a
+            href={openHref}
+            title="用 Chrome 開啟 PDF(需安裝 ParaaccoOpen.app)"
+            className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-primary hover:underline"
+          >
+            {fullPath}
+          </a>
+        ) : (
+          <code className="min-w-0 flex-1 break-all font-mono text-[11.5px] text-foreground">{fullPath}</code>
+        )}
         <CopyButton text={fullPath} label="複製" />
       </div>
       {volumesPath && (
@@ -87,10 +107,14 @@ export function NasLocation({ file, localRoot }: { file: DocumentFile; localRoot
         )}
       </dl>
       <div className="mt-2 text-muted-foreground">
+        {openHref && (
+          <a href={openHref} className="mr-3 font-semibold text-primary hover:underline">
+            在 Chrome 開啟 PDF
+          </a>
+        )}
         <a href={smbHref} className="text-primary hover:underline">
-          用 smb:// 開啟
+          用 smb:// 開啟(Finder)
         </a>
-        <span className="ml-1.5">(瀏覽器可能會擋,擋住時請複製路徑到 Finder「前往伺服器」)</span>
       </div>
     </section>
   );

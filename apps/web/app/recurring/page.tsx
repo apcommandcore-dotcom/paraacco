@@ -224,9 +224,9 @@ function RecurringRoot() {
         </Button>
       </div>
       <p className="mb-4 text-sm text-foreground-2">
-        水費、電費、瓦斯、網路、電信、勞保、健保、勞退、稅金、保險、租金、會費等定期繳費都在這一頁;掛上項目的帳單不會出現在一般消費列表(可在列表打開「包含定期繳費」)。訂閱在{" "}
+        水費、電費、瓦斯、網路、電信、勞保、健保、勞退、稅金、保險、租金、會費、軟體訂閱等定期繳費都在這一頁;掛上項目的帳單不會出現在一般消費列表(可在列表打開「包含定期繳費」)。設備保固在{" "}
         <Link href="/warranty" className="text-primary hover:underline">
-          保固與訂閱
+          設備保固
         </Link>
         。
       </p>
