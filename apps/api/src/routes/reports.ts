@@ -17,9 +17,10 @@ import {
   advancePayees,
   itemCategories,
   purchaseItems,
+  recurringSeries,
   vendors,
 } from "@paraacco/db";
-import { buildMonthlyReport, docKindOf } from "@paraacco/domain";
+import { CARD_CATEGORY, buildMonthlyReport, docKindOf } from "@paraacco/domain";
 import type { Bindings } from "../bindings";
 import { canAccessOwnership } from "../middleware/auth";
 import { getMixedOwnershipCutoff } from "../purchase-objects";
@@ -42,7 +43,7 @@ reportsRoute.get("/monthly", async (c) => {
   const scope = c.get("auth").scope;
 
   const db = createDb(c.env.DB);
-  const [docRows, fieldRows, fileRows, linkRows, itemRows, attachmentRows, cutoff] = await Promise.all([
+  const [docRows, fieldRows, fileRows, linkRows, itemRows, attachmentRows, cutoff, statementSeriesRows] = await Promise.all([
     db.select({ doc: documents, vendorName: vendors.name }).from(documents).leftJoin(vendors, eq(vendors.id, documents.vendorId)),
     db
       .select({ documentId: documentExtractedFields.documentId, fieldKey: documentExtractedFields.fieldKey, value: documentExtractedFields.value })
@@ -56,15 +57,26 @@ reportsRoute.get("/monthly", async (c) => {
     db.select().from(purchaseItems),
     db.select({ purchaseId: purchaseAttachments.purchaseId, purchaseItemId: purchaseAttachments.purchaseItemId, kind: purchaseAttachments.kind }).from(purchaseAttachments),
     getMixedOwnershipCutoff(db),
+    db.select({ id: recurringSeries.id }).from(recurringSeries).where(eq(recurringSeries.category, CARD_CATEGORY)),
   ]);
   const series = new Map(fieldRows.filter((f) => f.fieldKey === "recurring_series_id").map((f) => [f.documentId, f.value]));
   const financeType = new Map(fieldRows.filter((f) => f.fieldKey === "finance_doc_type").map((f) => [f.documentId, f.value]));
   const paths = new Map(fileRows.map((f) => [f.documentId, f.localPath]));
+  // 2026-11-28(SPEC_cards-page_20261128.md,原 statements-to-reconcile 10/04 決定):信用卡帳單、銀行對帳單不是支出,
+  // 刷卡消費已經以發票/收據計入。掛在對帳單類 series(category='statement')的文件、或 NAS 檔名類型是對帳單/信用卡帳單的,
+  // 一律不進月報表——修正信用卡帳單金額被重複計算。
+  const statementSeries = new Set(statementSeriesRows.map((r) => r.id));
+  const isStatementDoc = (docId: string) => {
+    const sid = series.get(docId);
+    if (sid && statementSeries.has(sid)) return true;
+    const typeSeg = (paths.get(docId) ?? "").split("/").pop()?.split("_")[1] ?? "";
+    return /對帳單|信用卡帳單/.test(typeSeg);
+  };
 
   const report = buildMonthlyReport({
     month,
     docs: docRows
-      .filter(({ doc }) => canAccessOwnership(scope, doc.ownership))
+      .filter(({ doc }) => canAccessOwnership(scope, doc.ownership) && !isStatementDoc(doc.id))
       .map(({ doc, vendorName }) => ({
         id: doc.id,
         status: doc.status,

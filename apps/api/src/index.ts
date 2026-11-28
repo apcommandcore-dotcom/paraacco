@@ -28,6 +28,7 @@ import { batchImportRoute } from "./routes/batch-import";
 import { extractionWritebackRoute } from "./routes/extraction-writeback";
 import { archiveRoute } from "./routes/archive";
 import { recurringRoute } from "./routes/recurring";
+import { cardsRoute } from "./routes/cards";
 import { purchaseItemsRoute } from "./routes/purchase-items";
 import { reportsRoute } from "./routes/reports";
 import { settingsRoute } from "./routes/settings";
@@ -98,6 +99,7 @@ app.route("/api/projects", projectsRoute);
 app.route("/api/statement-lines", statementLinesRoute);
 app.route("/api/case-links", caseLinksRoute);
 app.route("/api/recurring", recurringRoute);
+app.route("/api/cards", cardsRoute);
 // 2026-09-29 物件品項/月報表/系統設定(CODE_TASK_purchase-object-merge-docs_20260929_V1.01.md)
 app.route("/api/purchase-items", purchaseItemsRoute);
 app.route("/api/reports", reportsRoute);

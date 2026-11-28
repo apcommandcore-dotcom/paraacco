@@ -30,7 +30,8 @@ const TABS: { href: string; label: string; en: string; countKey?: "process"; als
   { href: "/browse", label: "依標題瀏覽", en: "BROWSE" },
   { href: "/warranty", label: "設備保固", en: "WARRANTY" },
   { href: "/recurring", label: "定期繳費", en: "RECURRING" },
-  { href: "/reconciliation", label: "對帳", en: "RECONCILIATION" },
+  // 2026-11-28(SPEC_cards-page_20261128.md):「對帳」改成「信用卡」;/reconciliation 頁面保留但不在導覽列。
+  { href: "/cards", label: "信用卡", en: "CARDS", alsoActive: ["/reconciliation"] },
   { href: "/admin", label: "管理後台", en: "ADMIN" },
 ];
 

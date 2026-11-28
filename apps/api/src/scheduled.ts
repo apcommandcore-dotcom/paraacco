@@ -15,7 +15,7 @@
 //     unmatched 變成 matched,見 reconciliation.ts。
 
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
-import { computeWarrantyStatus, daysUntilEndOfWeek, NOTIFY_DISPLAY_STATUSES, PERIOD_DISPLAY_LABELS, periodDisplayStatus, type PeriodStatus } from "@paraacco/domain";
+import { computeWarrantyStatus, daysUntilEndOfWeek, isStatementSeries, NOTIFY_DISPLAY_STATUSES, PERIOD_DISPLAY_LABELS, periodDisplayStatus, type PeriodStatus } from "@paraacco/domain";
 import { documents, recurringMatchReviews, recurringPeriods, recurringSeries, warrantySubscriptions, type Db } from "@paraacco/db";
 import { createNotification } from "./notify";
 import { reconcilePendingStatementLines } from "./reconciliation";
@@ -130,7 +130,8 @@ export async function runRecurringPeriodSweep(db: Db, now: Date = new Date()): P
   const byId = new Map(series.map((x) => [x.id, x]));
   for (const p of periods) {
     const s = byId.get(p.seriesId);
-    if (!s) continue;
+    // 2026-11-28:信用卡/銀行對帳單不是要繳的錢(帳單已在信用卡頁看),不推逾期/帳單未到通知。
+    if (!s || isStatementSeries(s)) continue;
     const st = periodDisplayStatus(
       { months: JSON.parse(p.periodMonths) as string[], status: p.status as PeriodStatus, dueDate: p.dueDate, billDocId: p.billDocId, statementLineId: p.statementLineId },
       s,
@@ -148,6 +149,7 @@ export async function runRecurringPeriodSweep(db: Db, now: Date = new Date()): P
     });
   }
   for (const r of reviews) {
+    if (r.seriesId && byId.get(r.seriesId) && isStatementSeries(byId.get(r.seriesId)!)) continue;
     await createNotification(db, {
       type: "warranty_due",
       title: "定期繳費待覆核掛期",

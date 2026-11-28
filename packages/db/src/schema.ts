@@ -1000,6 +1000,12 @@ export const recurringSeries = sqliteTable(
     amountMode: text("amount_mode").notNull().default("variable"), // 'fixed' | 'variable'
     // 1 = 對帳單扣款不足以結案,每期要掛繳款證明才算已繳(勞保、健保、勞退、稅金…;2026-10-01 決定)。
     requireProof: integer("require_proof", { mode: "boolean" }).notNull().default(false),
+    // 2026-11-28(migration 0014,SPEC_cards-page_20261128.md)——信用卡分頁:category='statement' 的 series 就是一張卡。
+    // card_kind:null/'credit_card' = 信用卡(/cards 顯示);'bank' = 銀行帳戶對帳單(不追蹤,/cards 與 /recurring 都不顯示)。
+    // 列舉只在應用層驗證(加 CHECK 會讓 drizzle-kit 重建表,recurring_periods 等有外鍵參照)。停用 = end_month 有值。
+    cardKind: text("card_kind"),
+    statementDay: integer("statement_day"), // 結帳日 1–31
+    debitAccount: text("debit_account"), // 扣款帳戶,純文字(paraacco 只記支出,不連餘額)
   },
   (t) => ({
     cadenceCheck: check(
@@ -1104,6 +1110,60 @@ export const recurringMonthMarks = sqliteTable(
   (t) => ({
     pk: primaryKey({ columns: [t.seriesId, t.month] }),
     statusCheck: check("recurring_month_marks_status_check", sql`${t.status} IN ('not_required', 'encrypted')`),
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// 信用卡分頁(2026-11-28,migration 0014,SPEC_cards-page_20261128.md)
+// 卡片本身 = recurring_series(category='statement'),帳單文件照舊用 billing_month / recurring_series_id 掛上。
+// card_statement_months:每張卡每個月的應繳金額(參考,不是支出)與手動「已繳」。paraacco 只記支出,不讀銀行流水。
+// installment_plans:分期付款,只看現金流(剩餘期數/本月分期/未繳餘額),不計入月報表——支出已在發票月份計入。
+// ---------------------------------------------------------------------------
+export const cardStatementMonths = sqliteTable(
+  "card_statement_months",
+  {
+    seriesId: text("series_id")
+      .notNull()
+      .references(() => recurringSeries.id),
+    month: text("month").notNull(), // YYYY-MM(帳單月份,同 billing_month)
+    amountCents: integer("amount_cents"), // 本期應繳(參考)
+    dueDate: text("due_date"), // YYYY-MM-DD
+    paidAt: text("paid_at"), // 手動標已繳的時間;null = 未標
+    note: text("note"),
+    updatedByMemberId: text("updated_by_member_id").references(() => members.id),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.seriesId, t.month] }),
+  }),
+);
+
+export const installmentPlans = sqliteTable(
+  "installment_plans",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    seriesId: text("series_id")
+      .notNull()
+      .references(() => recurringSeries.id), // 哪張卡
+    merchant: text("merchant").notNull(),
+    totalCents: integer("total_cents").notNull(), // 原始金額
+    periodCount: integer("period_count").notNull(), // 期數
+    perPeriodCents: integer("per_period_cents").notNull(), // 每期金額(最後一期吸收尾差)
+    firstMonth: text("first_month").notNull(), // 首期帳單月份 YYYY-MM
+    ownership: text("ownership"), // 預設帶卡片歸屬,可單筆改
+    documentId: text("document_id").references(() => documents.id), // 原始發票(選填)
+    status: text("status").notNull().default("active"), // 'active' | 'cancelled'(提前清償/取消)
+    note: text("note"),
+    createdByMemberId: text("created_by_member_id").references(() => members.id),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (t) => ({
+    seriesIdx: index("installment_plans_series_idx").on(t.seriesId),
+    docIdx: index("installment_plans_doc_idx").on(t.documentId),
+    statusCheck: check("installment_plans_status_check", sql`${t.status} IN ('active', 'cancelled')`),
+    countCheck: check("installment_plans_count_check", sql`${t.periodCount} >= 1 AND ${t.periodCount} <= 120`),
+    monthCheck: check("installment_plans_month_check", sql`${t.firstMonth} GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]'`),
   }),
 );
 

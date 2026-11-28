@@ -12,6 +12,7 @@
 // 不是專屬畫面,先不特別處理——如果之後要澈底清掉再一併調整那兩個 redirect。
 
 import { Fragment, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Check, Pencil, Search, X } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -33,6 +34,7 @@ import {
   apiFetch,
   documentOwnershipLabel,
   DOC_STATUS_LABELS,
+  INSTALLMENT_STATE_LABELS,
   MANUAL_RELATION_KIND,
   OWNERSHIP_LABELS,
   STAGE_LABELS,
@@ -50,6 +52,7 @@ import {
   type WarrantyStatus,
   type ProcessingJob,
   type ActivityLogEntry,
+  type InstallmentPlanRow,
 } from "@/lib/api";
 import { NasLocation } from "@/components/nas-location";
 import { centsToInput, fieldLabel, formatCents } from "@/lib/format";
@@ -555,6 +558,8 @@ function DocumentsView({
                 </button>
               )}
             </section>
+
+            {(detail.document.amountCents ?? 0) > 0 && <InstallmentSection documentId={detail.document.id} />}
 
             <section>
               <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">擷取欄位</h3>
@@ -1661,5 +1666,38 @@ export default function DocumentsPage() {
     <Suspense fallback={null}>
       <DocumentsRoot />
     </Suspense>
+  );
+}
+
+// 分期付款(2026-11-28,SPEC_cards-page_20261128.md)——發票一鍵設為分期:跳到 /cards 帶入商家、金額、歸屬。
+// 已設過的列出卡片與進度。分期只看現金流,不影響這張發票的支出計算。
+function InstallmentSection({ documentId }: { documentId: string }) {
+  const [plans, setPlans] = useState<InstallmentPlanRow[] | null>(null);
+  useEffect(() => {
+    setPlans(null);
+    apiFetch<{ installments: InstallmentPlanRow[] }>(`/api/cards/installments?documentId=${encodeURIComponent(documentId)}`)
+      .then((d) => setPlans(d.installments))
+      .catch(() => setPlans([]));
+  }, [documentId]);
+  return (
+    <section>
+      <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-muted-foreground">分期付款</h3>
+      {plans?.map((p) => (
+        <div key={p.id} className="mb-1 text-xs">
+          <Link href={`/cards?card=${p.seriesId}`} className="text-primary hover:underline">
+            {p.merchant} · {p.periodCount} 期
+          </Link>{" "}
+          <span className="text-muted-foreground">
+            {INSTALLMENT_STATE_LABELS[p.progress.state]}
+            {p.progress.state === "active" ? `(${p.progress.billedCount}/${p.periodCount},餘 ${formatCents(p.progress.remainingCents)})` : ""}
+          </span>
+        </div>
+      ))}
+      {plans && !plans.length && (
+        <Link href={`/cards?newInstallment=${encodeURIComponent(documentId)}`} className="text-xs text-primary hover:underline">
+          設為分期 →
+        </Link>
+      )}
+    </section>
   );
 }

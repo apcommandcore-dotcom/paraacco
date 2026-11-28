@@ -102,7 +102,8 @@ const DUE_VARIANT: Record<RecurringDueStatus, "destructive" | "warning" | "succe
   unscheduled: "outline",
 };
 
-const CATEGORY_KEYS = Object.keys(RECURRING_CATEGORY_LABELS);
+// 2026-11-28:信用卡/銀行對帳單(statement)不是要繳的錢,移到「信用卡」頁(/cards),這裡不列、不提供這個分類。
+const CATEGORY_KEYS = Object.keys(RECURRING_CATEGORY_LABELS).filter((k) => k !== "statement");
 const nt = (cents: number | null | undefined) => formatCents(cents);
 
 function monthIndex(m: string): number {
@@ -184,7 +185,7 @@ function RecurringRoot() {
 
   const setCategory = (cats: string[]) => router.replace(cats.length ? `/recurring?category=${cats.join(",")}` : "/recurring");
 
-  const allSeries = data?.series ?? [];
+  const allSeries = (data?.series ?? []).filter((s) => s.category !== "statement");
   const inCategory = (s: RecurringSeriesRow) => !selectedCategories.length || selectedCategories.includes(s.category ?? "other");
   const categoryCounts = allSeries.reduce<Record<string, number>>((acc, s) => ((acc[s.category ?? "other"] = (acc[s.category ?? "other"] ?? 0) + 1), acc), {});
   const items = allSeries.filter(inCategory);

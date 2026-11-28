@@ -932,3 +932,67 @@ const RECURRING_CATEGORY_NAME_RE = /水費|電費|瓦斯|網路|電信|勞保|�
 export function isRecurringBrowseCategory(c: { id: string; name: string }): boolean {
   return c.id in BROWSE_TO_RECURRING_CATEGORIES || RECURRING_CATEGORY_NAME_RE.test(c.name);
 }
+
+// ---------------------------------------------------------------------------
+// 信用卡分頁(2026-11-28,SPEC_cards-page_20261128.md)——GET /api/cards、/api/cards/installments
+// 卡片 = recurring_series(category='statement');帳單應繳金額只是參考,已繳手動標記,分期不計入月報表。
+// ---------------------------------------------------------------------------
+export interface CardMonthCell {
+  month: string;
+  inRange: boolean;
+  documentIds: string[];
+  mark: "not_required" | "encrypted" | null;
+  amountCents: number | null;
+  amountSource: "manual" | "document" | null;
+  dueDate: string | null;
+  paidAt: string | null;
+  note: string | null;
+}
+
+export interface CardRow extends RecurringSeriesRow {
+  cardKind: "credit_card" | "bank" | null;
+  statementDay: number | null;
+  debitAccount: string | null;
+  active: boolean;
+  months: CardMonthCell[];
+}
+
+export interface InstallmentProgress {
+  billedCount: number;
+  remainingCount: number;
+  thisMonthCents: number;
+  remainingCents: number;
+  lastMonth: string;
+  state: "upcoming" | "active" | "done" | "cancelled";
+}
+
+export interface InstallmentPlanRow {
+  id: number;
+  seriesId: string;
+  merchant: string;
+  totalCents: number;
+  periodCount: number;
+  perPeriodCents: number;
+  firstMonth: string;
+  ownership: string | null;
+  documentId: string | null;
+  status: "active" | "cancelled";
+  note: string | null;
+  createdAt: string;
+  progress: InstallmentProgress;
+}
+
+export interface CardsResponse {
+  month: string;
+  from: string;
+  cards: CardRow[];
+  hiddenBanks: { id: string; name: string }[];
+  installments: InstallmentPlanRow[];
+}
+
+export const INSTALLMENT_STATE_LABELS: Record<InstallmentProgress["state"], string> = {
+  upcoming: "尚未開始",
+  active: "繳款中",
+  done: "已繳完",
+  cancelled: "已結束",
+};

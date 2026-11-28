@@ -84,7 +84,7 @@ const MARK_STATUSES = ["not_required", "encrypted"] as const;
 const PROJECT_CODE_RE = /^AP_\d{5}$/;
 const EXCLUDED_DOC_STATUSES = new Set(["ignored", "dup"]);
 
-function visibleSeries<T extends { ownership: string | null }>(scope: string | null, rows: T[]): T[] {
+export function visibleSeries<T extends { ownership: string | null }>(scope: string | null, rows: T[]): T[] {
   // ownership 為 null/pending(未分流)視為公司範圍可見;'per' 只有 personal_corp 看得到。
   return rows.filter((s) => canAccessOwnership(scope, s.ownership && s.ownership !== "pending" ? s.ownership : "corp"));
 }
@@ -151,7 +151,7 @@ recurringRoute.get("/series", async (c) => {
 });
 
 // ---- 期次(V1.04 第二、三、五節)----
-const actorOf = (auth: { memberId: string | null; name: string | null; email: string | null }): Actor => ({ memberId: auth.memberId, name: auth.name ?? auth.email ?? null });
+export const actorOf = (auth: { memberId: string | null; name: string | null; email: string | null }): Actor => ({ memberId: auth.memberId, name: auth.name ?? auth.email ?? null });
 
 // 項目詳情:期次清單(新到舊),每期帶帳單/證明/扣款與畫面狀態。
 recurringRoute.get("/series/:id/periods", async (c) => {
@@ -240,7 +240,7 @@ recurringRoute.post("/series/:id/backfill/undo", async (c) => {
 const SERIES_OWNERSHIPS = ["per", "corp", "advance", "custody", "pending"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-interface SeriesBody {
+export interface SeriesBody {
   name?: unknown;
   category?: unknown;
   entityId?: unknown;
@@ -266,7 +266,7 @@ interface SeriesBody {
 type SeriesPatch = Partial<typeof recurringSeries.$inferInsert>;
 
 /** 驗證並轉成 DB 欄位。partial=true(編輯)時沒給的欄位不動。回傳 { field } 代表第一個不合法的欄位。 */
-async function parseSeriesBody(
+export async function parseSeriesBody(
   db: ReturnType<typeof createDb>,
   body: SeriesBody,
   partial: boolean,
@@ -373,7 +373,7 @@ async function parseSeriesBody(
   return { patch };
 }
 
-async function nextSeriesId(db: ReturnType<typeof createDb>): Promise<string> {
+export async function nextSeriesId(db: ReturnType<typeof createDb>): Promise<string> {
   const rows = await db.select({ id: recurringSeries.id }).from(recurringSeries);
   const max = rows.reduce((m, r) => Math.max(m, Number(/^RCS-(\d+)$/.exec(r.id)?.[1] ?? 0)), 0);
   return `RCS-${String(max + 1).padStart(3, "0")}`;
